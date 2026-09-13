@@ -106,10 +106,6 @@ src/
 └── helpers.rs   # Tab (buffer state) and Highlighter (syntax highlighting)
 ```
 
-### Note  
-- the bug that i found in this editor and still hasn't been fixed is that it crashes when you write more than 1 byted character, so make sure to use only one byted ascii characters, i will fix this later :)
-
-
 ### Architecture notes
 
 - **`Tab`** (`helpers.rs`) holds all editor state for a single buffer: the file name, raw text (`input_box`), cursor position (`cursor_x`, `cursor_y`), a flattened byte offset into the buffer (`gcursor`), and scroll offsets.
