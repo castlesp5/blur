@@ -1,10 +1,12 @@
 # blur
 
-A minimal, vim-inspired terminal text editor written in Rust, built on top of [`ratatui`](https://github.com/ratatui-org/ratatui), [`crossterm`](https://github.com/crossterm-rs/crossterm), and [`syntect`](https://github.com/trishume/syntect).
+A minimal, vim-inspired terminal text editor written in Rust, built on top of [`ratatui`](https://github.com/ratatui-org/ratatui), [`crossterm`](https://github.com/crossterm-rs/crossterm), [`syntect`](https://github.com/trishume/syntect), and [`opaline`](https://github.com/hyperb1iss/opaline).
 
 ```
-BLUR V0.1
+Blur 0.1.1
 ```
+
+Made by [castlesp5](https://github.com/castlesp5), [Artem Tsitronov](https://github.com/artemtsitronov)
 
 ## Features
 
@@ -19,7 +21,7 @@ BLUR V0.1
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, 2021 edition or later)
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain, 2024 edition)
 - Cargo
 
 ### Build from source
@@ -111,10 +113,9 @@ src/
 - **`Tab`** (`helpers.rs`) holds all editor state for a single buffer: the file name, raw text (`input_box`), cursor position (`cursor_x`, `cursor_y`), a flattened byte offset into the buffer (`gcursor`), and scroll offsets.
 - **`gcursor`** is the single source of truth for *where* an edit happens in the underlying `String`. Every motion or edit that changes `cursor_x`/`cursor_y` must keep `gcursor` in sync, or insertions/deletions will land at the wrong byte offset.
 - **`Highlighter`** wraps `syntect`, detecting syntax from the file extension and falling back to plain text for buffers with no file name or unrecognized extensions.
-- The **status bar** is split into three regions: current mode (50%), file name (25%), and cursor position (25%).
+- The **status bar** is split into multiple regions: current mode, file name, cursor position, and editor info.
 
 ## Known limitations
-- Cursor and offset tracking operate on byte length rather than Unicode grapheme/character count, so multi-byte UTF-8 input (accented characters, emoji, etc.) may cause the visual cursor column to drift from the actual insertion point.
 - Word-motion commands (`e`,  `b`) currently operate within the current line only and do not wrap across line boundaries.
 - Only a single buffer/tab is supported at this time.
 

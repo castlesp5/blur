@@ -137,12 +137,6 @@ pub fn insert_mode(
     )? {
         return Ok(true);
     }
-    let gcursor = tab
-        .input_box
-        .char_indices()
-        .nth(tab.gcursor as usize)
-        .map_or(tab.input_box.len(), |(i, _)| i) as usize;
-
     match event_key.code {
         crossterm::event::KeyCode::Esc => {
             *mode = 0;
@@ -150,37 +144,42 @@ pub fn insert_mode(
         }
 
         crossterm::event::KeyCode::Char(c) => {
-            tab.input_box.insert(gcursor, c);
-            tab.cursor_x += 1;
-            tab.gcursor += 1;
+            let blen = c.len_utf8() as i32;
+            tab.input_box.insert(tab.gcursor as usize, c);
+            tab.cursor_x += blen;
+            tab.gcursor += blen;
         }
 
         crossterm::event::KeyCode::Enter => {
-            tab.input_box.insert(gcursor, '\n');
+            tab.input_box.insert(tab.gcursor as usize, '\n');
             tab.cursor_x = 0;
             tab.cursor_y += 1;
             tab.gcursor += 1;
         }
         crossterm::event::KeyCode::Tab => {
-            tab.input_box.insert_str(gcursor, "    ");
+            tab.input_box.insert_str(tab.gcursor as usize, "    ");
             tab.cursor_x += 4;
             tab.gcursor += 4;
         }
         crossterm::event::KeyCode::Delete => {
             if tab.gcursor < tab.input_box.len() as i32 {
-                tab.input_box.remove(gcursor);
+                tab.input_box.remove(tab.gcursor as usize);
             }
         }
         crossterm::event::KeyCode::Backspace => {
             if tab.gcursor > 0 {
-                tab.gcursor -= 1;
-                tab.input_box.remove(gcursor);
+                let byte_idx = tab.gcursor as usize;
+                if let Some((prev_idx, ch)) = tab.input_box[..byte_idx].char_indices().next_back() {
+                    tab.input_box.remove(prev_idx);
+                    let removed_len = ch.len_utf8() as i32;
+                    tab.gcursor -= removed_len;
 
-                if tab.cursor_x > 0 {
-                    tab.cursor_x -= 1;
-                } else if tab.cursor_y > 0 {
-                    tab.cursor_y -= 1;
-                    tab.cursor_x = splitted[tab.cursor_y as usize].len() as i32;
+                    if tab.cursor_x > 0 {
+                        tab.cursor_x -= removed_len;
+                    } else if tab.cursor_y > 0 {
+                        tab.cursor_y -= 1;
+                        tab.cursor_x = splitted[tab.cursor_y as usize].len() as i32;
+                    }
                 }
             }
         }

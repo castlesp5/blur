@@ -1,16 +1,44 @@
 use syntect::parsing::SyntaxSet;
 
+fn wcag_contrast(l1: f64, l2: f64) -> f64 {
+    let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+pub fn fg_color(bg: opaline::OpalineColor) -> ratatui::style::Color {
+    let to_linear = |c: u8| {
+        let c = c as f64 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * to_linear(bg.r) + 0.7152 * to_linear(bg.g) + 0.0722 * to_linear(bg.b);
+
+    let contrast_black = wcag_contrast(luminance, 0.0);
+    let contrast_white = wcag_contrast(luminance, 1.0);
+
+    if contrast_black >= contrast_white {
+        ratatui::style::Color::Black
+    } else {
+        ratatui::style::Color::White
+    }
+}
+
 pub struct Highlighter {
     syntax_set: syntect::parsing::SyntaxSet,
-    theme: syntect::highlighting::Theme,
+    syntect_theme: syntect::highlighting::Theme,
 }
 
 impl Highlighter {
-    pub fn new() -> Self {
+    pub fn new(theme: &opaline::Theme) -> Self {
         let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme_set = syntect::highlighting::ThemeSet::load_defaults();
-        let theme = theme_set.themes["base16-mocha.dark"].clone();
-        Highlighter { syntax_set, theme }
+        let syntect_theme = opaline::adapters::syntect::to_syntect_theme(theme);
+        Highlighter {
+            syntax_set,
+            syntect_theme,
+        }
     }
 
     pub fn highlight<'a>(&self, tab: &Tab) -> Vec<ratatui::text::Line<'a>> {
@@ -33,7 +61,7 @@ impl Highlighter {
             .flatten()
             .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
-        let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.theme);
+        let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
         let mut spans: Vec<ratatui::text::Line> = Vec::new();
 
         for line in syntect::util::LinesWithEndings::from(&tab.input_box) {
