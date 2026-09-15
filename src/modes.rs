@@ -1,3 +1,5 @@
+use std::thread::current;
+
 use crate::helpers::Tab;
 
 use crate::controls::{controls, default_controls};
@@ -117,6 +119,7 @@ pub fn normal_mode(
                 tab.input_box.remove(y);
                 tab.cursor_y -= 1;
                 tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
+                return Ok(true);
             }
             else if tab.cursor_x > 0 {
                 let x = tab.cursor_x as usize;
@@ -128,10 +131,11 @@ pub fn normal_mode(
             else {
                 if y > 0
                 {
+                    let current = tab.input_box.remove(y);
+                    let prev_line = &mut tab.input_box[y - 1];
                     tab.cursor_y -= 1;
-                    tab.cursor_x = tab.input_box[tab.cursor_y as usize].len() as i32;
-                    let removed = tab.input_box.remove(y);
-                    tab.input_box[y - 1].push_str(&removed);
+                    tab.cursor_x = prev_line.len() as i32;
+                    prev_line.push_str(&current);
                 }
             }
         }
@@ -170,7 +174,7 @@ pub fn insert_mode(
             let x = tab.cursor_x as usize;
             let rest = tab.input_box[y].split_off(x);
             tab.input_box.insert(y + 1, rest);
-            tab.input_box[y].push('\n');
+            // tab.input_box[y].push('\n');
             tab.cursor_x = 0;
             tab.cursor_y += 1;
         }
@@ -203,7 +207,7 @@ pub fn insert_mode(
                 tab.input_box.remove(y);
                 tab.cursor_y -= 1;
                 tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
-                // return Ok(true);
+                return Ok(true);
             }
             if tab.cursor_x > 0 {
                 let x = tab.cursor_x as usize;
@@ -215,10 +219,11 @@ pub fn insert_mode(
             else {
                 if y > 0
                 {
+                    let current = tab.input_box.remove(y);
+                    let prev_line = &mut tab.input_box[y - 1];
                     tab.cursor_y -= 1;
-                    tab.cursor_x = tab.input_box[tab.cursor_y as usize].len() as i32;
-                    let removed = tab.input_box.remove(y);
-                    tab.input_box[y - 1].push_str(&removed);
+                    tab.cursor_x = prev_line.len() as i32;
+                    prev_line.push_str(&current);
                 }
             }
         }
