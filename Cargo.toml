@@ -8,3 +8,4 @@ crossterm = "0.29.0"
 opaline = { version = "0.4.2", features = ["syntect"] }
 ratatui = "0.30.2"
 syntect = "5.3.0"
+unicode-width = "0.2.2"

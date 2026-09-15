@@ -170,6 +170,7 @@ pub fn insert_mode(
             let x = tab.cursor_x as usize;
             let rest = tab.input_box[y].split_off(x);
             tab.input_box.insert(y + 1, rest);
+            tab.input_box[y].push('\n');
             tab.cursor_x = 0;
             tab.cursor_y += 1;
         }
@@ -246,17 +247,31 @@ pub fn unsaved_work_mode(
 
 pub fn insert_paste(tab: &mut Tab, text: &str) {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
+
     tab.saved = false;
 
-    tab.input_box[tab.cursor_y as usize].insert_str(tab.cursor_x as usize, &text);
+    let y = tab.cursor_y as usize;
+    let x = tab.cursor_x as usize;
 
-    if let Some(last_newline) = text.rfind('\n') {
-        let newline_count = text.matches('\n').count() as i32;
-        tab.cursor_y += newline_count;
-        tab.cursor_x = (text.len() - last_newline - 1) as i32;
-    } else {
-        tab.cursor_x += text.len() as i32;
+    let mut lines = text.split('\n');
+
+    let before = tab.input_box[y][..x].to_string();
+    let after = tab.input_box[y][x..].to_string();
+
+    let first = lines.next().unwrap_or("");
+
+    tab.input_box[y] = format!("{}{}", before, first);
+
+    let mut new_y = y;
+
+    for line in lines {
+        new_y += 1;
+        tab.input_box.insert(new_y, line.to_string());
     }
+
+    tab.input_box[new_y].push_str(&after);
+    tab.cursor_y = new_y as i32;
+    tab.cursor_x = tab.input_box[new_y].len() as i32 - after.len() as i32;
 }
 
 pub fn open_mode(

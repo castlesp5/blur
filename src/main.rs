@@ -7,6 +7,7 @@ use ratatui::layout::Alignment;
 use ratatui::style::*;
 use ratatui::text::*;
 use ratatui::*;
+use unicode_width::UnicodeWidthStr;
 
 fn main() -> std::io::Result<()> {
     ratatui::run(app)?;
@@ -178,7 +179,7 @@ fn renderer(
         .unwrap_or(&empty);
     let visual_x = current_line
         .get(..tab.cursor_x as usize)
-        .map(|s| s.chars().count())
+        .map(UnicodeWidthStr::width)
         .unwrap_or(tab.cursor_x as usize) as u16;
 
     if visual_x <= tab.scroll_x {

@@ -118,6 +118,7 @@ dependencies = [
  "opaline",
  "ratatui",
  "syntect",
+ "unicode-width",
 ]
 
 [[package]]
