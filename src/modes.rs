@@ -14,10 +14,10 @@ pub fn normal_mode(
     }
     match event_key.code {
         crossterm::event::KeyCode::Char('a') => {
-            let mut offset = 0;
-            for y in 0..tab.cursor_y as usize {
-                offset += text[y].len() as i32 + 1;
-            }
+            // let mut offset = 0;
+            // for y in 0..tab.cursor_y as usize {
+            //     offset += text[y].len() as i32 + 1;
+            // }
             if (tab.cursor_x as usize) < text[tab.cursor_y as usize].len() {
                 tab.cursor_x += 1;
             }
@@ -28,14 +28,14 @@ pub fn normal_mode(
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
-            let mut offset = 0;
+            // let mut offset = 0;
             let new_x = match text[tab.cursor_y as usize][start..].find(' ') {
                 Some(rel) => start + rel + 1,
                 None => text[tab.cursor_y as usize].len(),
             } as i32;
-            for y in 0..tab.cursor_y as usize {
-                offset += text[y].len() as i32 + 1;
-            }
+            // for y in 0..tab.cursor_y as usize {
+            //     offset += text[y].len() as i32 + 1;
+            // }
 
             tab.cursor_x = new_x;
         }
@@ -52,12 +52,12 @@ pub fn normal_mode(
             tab.cursor_x = new_x;
         }
         crossterm::event::KeyCode::Char('o') => {
-            let mut offset = 0;
-            for y in 0..tab.cursor_y as usize {
-                offset += text[y].len() as i32 + 1;
-            }
-            offset += text[tab.cursor_y as usize].len() as i32;
-            tab.input_box.insert(tab.cursor_y as usize, String::new());
+            // let mut offset = 0;
+            // for y in 0..tab.cursor_y as usize {
+            //     offset += text[y].len() as i32 + 1;
+            // }
+            // offset += text[tab.cursor_y as usize].len() as i32;
+            tab.input_box.insert(tab.cursor_y as usize + 1, String::new());
             tab.cursor_y += 1;
             tab.cursor_x = 0;
             *mode = 1;
@@ -88,19 +88,41 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Delete => {
             let x = tab.cursor_x as usize;
             let y = tab.cursor_y as usize;
-            if x < tab.input_box[y].len() {
-                tab.input_box[y].remove(x);
+            if tab.input_box[y].is_empty() && tab.input_box.len() > 1
+            {
+                tab.input_box.remove(y);
+                tab.cursor_x = 0;
+            }
+            else
+            {
+                if x < tab.input_box[y].len() {
+                    tab.input_box[y].remove(x);
+                }
             }
         }
         crossterm::event::KeyCode::Backspace => {
-            if tab.cursor_x > 0 {
-                let x = tab.cursor_x as usize;
-                let y = tab.cursor_y as usize;
-                tab.input_box[y].remove(x - 1);
-                tab.cursor_x -= 1;
-            } else if tab.cursor_y > 0 {
+            let y = tab.cursor_y as usize;
+            if tab.input_box[y].is_empty() && y > 0
+            {
+                tab.input_box.remove(y);
                 tab.cursor_y -= 1;
                 tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
+            }
+            else if tab.cursor_x > 0 {
+                let x = tab.cursor_x as usize;
+                if let Some((prev_idx, ch)) = tab.input_box[y][..x].char_indices().next_back() {
+                    tab.input_box[y].remove(prev_idx);
+                    tab.cursor_x -= ch.len_utf8() as i32;
+                }
+            }
+            else {
+                if y > 0
+                {
+                    tab.cursor_y -= 1;
+                    tab.cursor_x = tab.input_box[tab.cursor_y as usize].len() as i32;
+                    let removed = tab.input_box.remove(y);
+                    tab.input_box[y - 1].push_str(&removed);
+                }
             }
         }
         _ => {}
@@ -142,23 +164,44 @@ pub fn insert_mode(
             tab.cursor_x += 4;
         }
         crossterm::event::KeyCode::Delete => {
-            let y = tab.cursor_y as usize;
             let x = tab.cursor_x as usize;
-            if y < tab.input_box.len() && x < tab.input_box[y].len() {
-                tab.input_box[y].remove(x);
+            let y = tab.cursor_y as usize;
+            if tab.input_box[y].is_empty() && tab.input_box.len() > 1
+            {
+                tab.input_box.remove(y);
+                tab.cursor_x = 0;
+            }
+            else
+            {
+                if x < tab.input_box[y].len() {
+                    tab.input_box[y].remove(x);
+                }
             }
         }
         crossterm::event::KeyCode::Backspace => {
             let y = tab.cursor_y as usize;
+            if tab.input_box[y].is_empty() && y > 0
+            {
+                tab.input_box.remove(y);
+                tab.cursor_y -= 1;
+                tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
+                // return Ok(true);
+            }
             if tab.cursor_x > 0 {
                 let x = tab.cursor_x as usize;
                 if let Some((prev_idx, ch)) = tab.input_box[y][..x].char_indices().next_back() {
                     tab.input_box[y].remove(prev_idx);
                     tab.cursor_x -= ch.len_utf8() as i32;
                 }
-            } else if tab.cursor_y > 0 {
-                tab.cursor_y -= 1;
-                tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
+            }
+            else {
+                if y > 0
+                {
+                    tab.cursor_y -= 1;
+                    tab.cursor_x = tab.input_box[tab.cursor_y as usize].len() as i32;
+                    let removed = tab.input_box.remove(y);
+                    tab.input_box[y - 1].push_str(&removed);
+                }
             }
         }
         _ => {}
