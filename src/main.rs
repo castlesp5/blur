@@ -26,10 +26,11 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         1 => {}
         _ => match std::fs::read_to_string(&args[1]) {
             Ok(content) => {
-                tab.input_box = content;
+                tab.input_box = content.split('\n').map(|line| line.to_string()).collect();
                 tab.file_name = args[1].clone();
             }
             Err(_) => {
+                tab.input_box = vec![String::new()];
                 tab.file_name = args[1].clone();
             }
         },
@@ -47,8 +48,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         })?;
 
         let event = crossterm::event::read()?;
-        let the_text = &tab.input_box.clone();
-        let mut splitted: Vec<_> = the_text.split('\n').collect();
+        let mut the_text = tab.input_box.clone();
         match &event {
             crossterm::event::Event::Paste(text) => match mode {
                 1 => modes::insert_paste(&mut tab, text),
@@ -64,7 +64,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                             *event_key,
                             &mut mode,
                             &mut the_command_line,
-                            &mut splitted,
+                            &mut the_text,
                         )
                         .unwrap()
                         {
@@ -73,7 +73,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                     1 => {
                         /////////////////////// INSERT MODE /////////////////////////
-                        if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut splitted)
+                        if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut the_text)
                             .unwrap()
                         {
                             continue;
@@ -159,11 +159,12 @@ fn renderer(
         tab.scroll_y = tab.cursor_y as u16 - areas[0].height + 1;
     }
 
+    let empty = String::new();
     let current_line = tab
         .input_box
-        .split('\n')
+        .iter()
         .nth(tab.cursor_y as usize)
-        .unwrap_or("");
+        .unwrap_or(&empty);
     let visual_x = current_line
         .get(..tab.cursor_x as usize)
         .map(|s| s.chars().count())

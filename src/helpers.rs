@@ -45,7 +45,7 @@ impl Highlighter {
         if tab.file_name.is_empty() {
             return tab
                 .input_box
-                .split('\n')
+                .iter()
                 .map(|line| {
                     ratatui::text::Line::from(ratatui::text::Span::styled(
                         line.to_string(),
@@ -64,7 +64,7 @@ impl Highlighter {
         let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
         let mut spans: Vec<ratatui::text::Line> = Vec::new();
 
-        for line in syntect::util::LinesWithEndings::from(&tab.input_box) {
+        for line in &tab.input_box {
             let range = the_highlighter
                 .highlight_line(line, &self.syntax_set)
                 .unwrap_or_default();
@@ -88,10 +88,9 @@ impl Highlighter {
 
 pub struct Tab {
     pub file_name: String,
-    pub input_box: String,
+    pub input_box: Vec<String>,
     pub cursor_x: i32,
     pub cursor_y: i32,
-    pub gcursor: i32,
     pub scroll_x: u16,
     pub scroll_y: u16,
 }
@@ -100,10 +99,9 @@ impl Tab {
     pub fn new() -> Self {
         Self {
             file_name: String::from(""),
-            input_box: String::new(),
+            input_box: vec![String::new()],
             cursor_x: 0,
             cursor_y: 0,
-            gcursor: 0,
             scroll_y: 0,
             scroll_x: 0,
         }
