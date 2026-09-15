@@ -1,4 +1,4 @@
-use crate::helpers::{Tab, log};
+use crate::helpers::Tab;
 
 use crate::controls::{controls, default_controls};
 
@@ -57,18 +57,26 @@ pub fn normal_mode(
             //     offset += text[y].len() as i32 + 1;
             // }
             // offset += text[tab.cursor_y as usize].len() as i32;
+            tab.saved = false;
             tab.input_box.insert(tab.cursor_y as usize + 1, String::new());
             tab.cursor_y += 1;
             tab.cursor_x = 0;
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('q') => {
-            return Ok(false);
+            if !tab.saved
+            {
+                *mode = 403;
+            }
+            else
+            {
+                return Ok(false);
+            }
         }
         crossterm::event::KeyCode::Char('w') => {
             if tab.file_name.len() > 0 {
                 match std::fs::write(&tab.file_name, &tab.input_box.join("\n")) {
-                    Ok(_) => {}
+                    Ok(_) => {tab.saved = true;}
                     Err(_) => {
                         *mode = 402;
                     }
@@ -88,6 +96,7 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Delete => {
             let x = tab.cursor_x as usize;
             let y = tab.cursor_y as usize;
+            tab.saved = false;
             if tab.input_box[y].is_empty() && tab.input_box.len() > 1
             {
                 tab.input_box.remove(y);
@@ -102,6 +111,7 @@ pub fn normal_mode(
         }
         crossterm::event::KeyCode::Backspace => {
             let y = tab.cursor_y as usize;
+            tab.saved = false;
             if tab.input_box[y].is_empty() && y > 0
             {
                 tab.input_box.remove(y);
@@ -130,6 +140,9 @@ pub fn normal_mode(
     Ok(true)
 }
 
+
+
+
 pub fn insert_mode(
     tab: &mut Tab,
     event_key: crossterm::event::KeyEvent,
@@ -147,6 +160,7 @@ pub fn insert_mode(
 
         crossterm::event::KeyCode::Char(c) => {
             let blen = c.len_utf8() as i32;
+            tab.saved = false;
             tab.input_box[tab.cursor_y as usize].insert(tab.cursor_x as usize, c);
             tab.cursor_x += blen;
         }
@@ -160,12 +174,14 @@ pub fn insert_mode(
             tab.cursor_y += 1;
         }
         crossterm::event::KeyCode::Tab => {
+            tab.saved = false;
             tab.input_box[tab.cursor_y as usize].insert_str(tab.cursor_x as usize, "    ");
             tab.cursor_x += 4;
         }
         crossterm::event::KeyCode::Delete => {
             let x = tab.cursor_x as usize;
             let y = tab.cursor_y as usize;
+            tab.saved = false;
             if tab.input_box[y].is_empty() && tab.input_box.len() > 1
             {
                 tab.input_box.remove(y);
@@ -180,6 +196,7 @@ pub fn insert_mode(
         }
         crossterm::event::KeyCode::Backspace => {
             let y = tab.cursor_y as usize;
+            tab.saved = false;
             if tab.input_box[y].is_empty() && y > 0
             {
                 tab.input_box.remove(y);
@@ -209,8 +226,27 @@ pub fn insert_mode(
     Ok(true)
 }
 
+pub fn unsaved_work_mode(
+    event_key: crossterm::event::KeyEvent,
+    mode: &mut i32,
+) -> std::io::Result<bool>
+{
+    match event_key.code
+    {
+        crossterm::event::KeyCode::Char('y') => {
+            return Ok(false);
+        }
+        crossterm::event::KeyCode::Char('n') => {
+            *mode = 0;
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
 pub fn insert_paste(tab: &mut Tab, text: &str) {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    tab.saved = false;
 
     tab.input_box[tab.cursor_y as usize].insert_str(tab.cursor_x as usize, &text);
 
@@ -292,37 +328,3 @@ pub fn save_mode(
 }
 
 //////////////////////////////////////////// DEAD CODE BURIED HERE ////////////////////////////////////////////
-
-// pub fn command_mode(
-//     event_key: crossterm::event::KeyEvent,
-//     mode: &mut i32,
-//     the_command_line: &mut String,
-//     input_box: &mut String
-//     ) -> std::io::Result<bool>
-// {
-//     match mode {
-//         10 =>
-//         {
-//             std::fs::write("output.txt", input_box)?;
-//         }
-//         _ => {}
-//     }
-//     Ok(true)
-// }
-//
-//
-// pub fn execute_commands(
-//     the_command_line: &mut String
-// ) -> std::io::Result<bool>
-// {
-//     let mut parts: Vec<&str> = the_command_line.split_whitespace().collect();
-//
-//     let output = std::process::Command::new(parts[0])
-//         .args(&parts[1..])
-//         .output()
-//         .expect("Failed to run the command");
-//
-//     println!("{:?}", output);
-//     the_command_line.clear();
-//     Ok(true)
-// }

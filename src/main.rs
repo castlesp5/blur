@@ -94,6 +94,14 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                             mode = 401;
                         }
                     }
+                    ////////////////////// UNSAVED WORK MODE ////////////////////////////////
+                    
+                    403 => {
+                        if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap()
+                        {
+                            break;
+                        }
+                    }
                     _ => {
                         if crossterm::event::read()?.is_key_press() {
                             the_command_line.clear();
@@ -147,6 +155,9 @@ fn renderer(
         402 => {
             footer_text = format!(" Can't save file ");
         }
+        403 => {
+            footer_text = format!("you have unsaved work, quit anyway? [y/n]")
+        }
         _ => {
             footer_text =
                 "SOME ERRORS, try to relaunch the program                   BLUR V0.1".to_string();
@@ -181,7 +192,11 @@ fn renderer(
         if tab.file_name.is_empty() {
             "[Empty File]*".to_string()
         } else {
-            tab.file_name.clone()
+            if tab.saved {
+                tab.file_name.clone()
+            } else {
+                format!("*{}",tab.file_name.clone())
+            }
         }
     );
     let footer_left = Line::from(vec![

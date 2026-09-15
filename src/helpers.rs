@@ -88,6 +88,7 @@ impl Highlighter {
 
 pub struct Tab {
     pub file_name: String,
+    pub saved: bool,
     pub input_box: Vec<String>,
     pub cursor_x: i32,
     pub cursor_y: i32,
@@ -99,6 +100,7 @@ impl Tab {
     pub fn new() -> Self {
         Self {
             file_name: String::from(""),
+            saved: true,
             input_box: vec![String::new()],
             cursor_x: 0,
             cursor_y: 0,
