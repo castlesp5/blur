@@ -134,9 +134,21 @@ pub fn normal_mode(
                 }
             }
         }
-        crossterm::event::KeyCode::Char('z') => {
+        crossterm::event::KeyCode::Char('d') => {
+            let y = tab.cursor_y as usize;
+            let line = tab.input_box.remove(y);
+
+            tab.undo_stack.push(EditRecord::RemoveLine {
+                row: y,
+                content: line.clone(),
+            });
+            tab.redo_stack.clear();
+
+        }
+        crossterm::event::KeyCode::Char('u') => {
             if let Some(record) = tab.undo_stack.pop() {
                 let (row, col) = apply_inverse(&record, &mut tab.input_box);
+                tab.saved = false;
                 tab.cursor_y = row as i32;
                 tab.cursor_x = col as i32;
                 tab.redo_stack.push(record);
@@ -145,6 +157,7 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Char('r') => {
             if let Some(record) = tab.redo_stack.pop() {
                 let (row, col) = apply_forward(&record, &mut tab.input_box);
+                tab.saved = false;
                 tab.cursor_y = row as i32;
                 tab.cursor_x = col as i32;
                 tab.undo_stack.push(record);
@@ -160,7 +173,22 @@ pub fn insert_mode(
     event_key: crossterm::event::KeyEvent,
     mode: &mut i32,
     text: &mut Vec<String>,
+    filled_now: &mut String,
 ) -> std::io::Result<bool> {
+    if !matches!(event_key.code, crossterm::event::KeyCode::Char(_)) {
+        if !filled_now.is_empty() {
+            let col = tab.cursor_x as usize - filled_now.len();
+            tab.undo_stack.push(EditRecord::InsertString {
+                row: tab.cursor_y as usize,
+                col,
+                text: filled_now.clone(),
+            });
+            tab.redo_stack.clear();
+        }
+        filled_now.clear();
+    }
+
+
     if default_controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, text)? {
         return Ok(true);
     }
@@ -176,8 +204,7 @@ pub fn insert_mode(
             let row = tab.cursor_y as usize;
             let col = tab.cursor_x as usize;
             tab.input_box[row].insert(col, c);
-            tab.undo_stack
-                .push(EditRecord::InsertChar { row, col, ch: c });
+            filled_now.push(c);
             tab.redo_stack.clear();
             tab.cursor_x += blen;
         }
@@ -326,6 +353,8 @@ pub fn open_mode(
         crossterm::event::KeyCode::Enter => {
             match std::fs::read_to_string(&the_command_line) {
                 Ok(content) => {
+                    tab.undo_stack.clear();
+                    tab.redo_stack.clear();
                     tab.input_box = content.clone().split('\n').map(|s| s.to_string()).collect()
                 }
                 Err(_) => {

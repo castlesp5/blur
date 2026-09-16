@@ -141,6 +141,10 @@ pub enum EditRecord {
     InsertLine {
         row: usize,
     },
+    RemoveLine {
+        row: usize,
+        content: String 
+    },
     RemoveEmptyLine {
         row: usize,
     },
@@ -177,10 +181,14 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         }
 
         EditRecord::InsertLine { row } => {
-            input_box.insert(*row, String::new());
+            input_box.remove(*row);
             (*row, 0)
         }
-
+        
+        EditRecord::RemoveLine { row, content } => {
+            input_box.insert(*row, content.clone());
+            (*row, 0)
+        }
         EditRecord::RemoveEmptyLine { row } => {
             input_box.insert(*row, String::new());
             (*row, 0)
@@ -219,6 +227,10 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
 
         EditRecord::InsertLine { row } => {
             input_box.insert(*row, String::new());
+            (*row, 0)
+        }
+        EditRecord::RemoveLine { row, .. } => {
+            input_box.remove(*row);
             (*row, 0)
         }
 

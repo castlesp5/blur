@@ -23,6 +23,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let highlighter = Highlighter::new(&theme);
     let mut mode = 0;
     let mut the_command_line = String::new();
+    let mut filled_now = String::new();
     match args.len() {
         1 => {}
         _ => match std::fs::read_to_string(&args[1]) {
@@ -74,7 +75,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                     1 => {
                         /////////////////////// INSERT MODE /////////////////////////
-                        if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut the_text)
+                        if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut the_text, &mut filled_now)
                             .unwrap()
                         {
                             continue;
