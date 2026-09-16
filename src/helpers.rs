@@ -94,6 +94,8 @@ pub struct Tab {
     pub cursor_y: i32,
     pub scroll_x: u16,
     pub scroll_y: u16,
+    pub undo_stack: Vec<EditRecord>,
+    pub redo_stack: Vec<EditRecord>,
 }
 
 impl Tab {
@@ -106,6 +108,123 @@ impl Tab {
             cursor_y: 0,
             scroll_y: 0,
             scroll_x: 0,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+}
+
+pub enum EditRecord {
+    InsertChar {
+        row: usize,
+        col: usize,
+        ch: char,
+    },
+    DeleteChar {
+        row: usize,
+        col: usize,
+        ch: char,
+    },
+    InsertString {
+        row: usize,
+        col: usize,
+        text: String,
+    },
+    SplitLine {
+        row: usize,
+        col: usize,
+    },
+    MergeLine {
+        row: usize,
+        prev_len: usize,
+    },
+    InsertLine {
+        row: usize,
+    },
+    RemoveEmptyLine {
+        row: usize,
+    },
+}
+
+pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize, usize) {
+    match record {
+        EditRecord::InsertChar { row, col, .. } => {
+            input_box[*row].remove(*col);
+            (*row, *col)
+        }
+
+        EditRecord::DeleteChar { row, col, ch } => {
+            input_box[*row].insert(*col, *ch);
+            (*row, *col + 1)
+        }
+
+        EditRecord::InsertString { row, col, text } => {
+            let end = col + text.chars().count();
+            input_box[*row].replace_range(*col..end, "");
+            (*row, *col)
+        }
+
+        EditRecord::SplitLine { row, col } => {
+            let next_line = input_box.remove(*row + 1);
+            input_box[*row].push_str(&next_line);
+            (*row, *col)
+        }
+
+        EditRecord::MergeLine { row, prev_len } => {
+            let combined = input_box[*row - 1].split_off(*prev_len);
+            input_box.insert(*row, combined);
+            (*row, 0)
+        }
+
+        EditRecord::InsertLine { row } => {
+            input_box.insert(*row, String::new());
+            (*row, 0)
+        }
+
+        EditRecord::RemoveEmptyLine { row } => {
+            input_box.insert(*row, String::new());
+            (*row, 0)
+        }
+    }
+}
+
+pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize, usize) {
+    match record {
+        EditRecord::InsertChar { row, col, ch } => {
+            input_box[*row].insert(*col, *ch);
+            (*row, *col + ch.len_utf8())
+        }
+
+        EditRecord::DeleteChar { row, col, .. } => {
+            input_box[*row].remove(*col);
+            (*row, *col)
+        }
+
+        EditRecord::InsertString { row, col, text } => {
+            input_box[*row].insert_str(*col, text);
+            (*row, *col + text.len())
+        }
+
+        EditRecord::SplitLine { row, col } => {
+            let rest = input_box[*row].split_off(*col);
+            input_box.insert(*row + 1, rest);
+            (*row + 1, 0)
+        }
+
+        EditRecord::MergeLine { row, prev_len } => {
+            let combined = input_box.remove(*row + 1);
+            input_box[*row].push_str(&combined);
+            (*row, *prev_len)
+        }
+
+        EditRecord::InsertLine { row } => {
+            input_box.insert(*row, String::new());
+            (*row, 0)
+        }
+
+        EditRecord::RemoveEmptyLine { row } => {
+            input_box.remove(*row);
+            (*row, 0)
         }
     }
 }

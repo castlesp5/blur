@@ -1,8 +1,5 @@
-use std::thread::current;
-
-use crate::helpers::Tab;
-
 use crate::controls::{controls, default_controls};
+use crate::helpers::{EditRecord, Tab, apply_forward, apply_inverse};
 
 pub fn normal_mode(
     tab: &mut Tab,
@@ -16,10 +13,6 @@ pub fn normal_mode(
     }
     match event_key.code {
         crossterm::event::KeyCode::Char('a') => {
-            // let mut offset = 0;
-            // for y in 0..tab.cursor_y as usize {
-            //     offset += text[y].len() as i32 + 1;
-            // }
             if (tab.cursor_x as usize) < text[tab.cursor_y as usize].len() {
                 tab.cursor_x += 1;
             }
@@ -30,22 +23,16 @@ pub fn normal_mode(
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
-            // let mut offset = 0;
             let new_x = match text[tab.cursor_y as usize][start..].find(' ') {
                 Some(rel) => start + rel + 1,
                 None => text[tab.cursor_y as usize].len(),
             } as i32;
-            // for y in 0..tab.cursor_y as usize {
-            //     offset += text[y].len() as i32 + 1;
-            // }
 
             tab.cursor_x = new_x;
         }
         crossterm::event::KeyCode::Char('b') => {
             let start = tab.cursor_x as usize;
             let before = &text[tab.cursor_y as usize][..start];
-            // let trimmed_len = before.trim_end_matches(' ').len();
-            // before = &before[..trimmed_len];
             let new_x = match before.rfind(' ') {
                 Some(rel) => rel,
                 None => 0,
@@ -54,31 +41,30 @@ pub fn normal_mode(
             tab.cursor_x = new_x;
         }
         crossterm::event::KeyCode::Char('o') => {
-            // let mut offset = 0;
-            // for y in 0..tab.cursor_y as usize {
-            //     offset += text[y].len() as i32 + 1;
-            // }
-            // offset += text[tab.cursor_y as usize].len() as i32;
             tab.saved = false;
-            tab.input_box.insert(tab.cursor_y as usize + 1, String::new());
+            tab.input_box
+                .insert(tab.cursor_y as usize + 1, String::new());
+            tab.undo_stack.push(EditRecord::InsertLine {
+                row: tab.cursor_y as usize + 1,
+            });
+            tab.redo_stack.clear();
             tab.cursor_y += 1;
             tab.cursor_x = 0;
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('q') => {
-            if !tab.saved
-            {
+            if !tab.saved {
                 *mode = 403;
-            }
-            else
-            {
+            } else {
                 return Ok(false);
             }
         }
         crossterm::event::KeyCode::Char('w') => {
             if tab.file_name.len() > 0 {
                 match std::fs::write(&tab.file_name, &tab.input_box.join("\n")) {
-                    Ok(_) => {tab.saved = true;}
+                    Ok(_) => {
+                        tab.saved = true;
+                    }
                     Err(_) => {
                         *mode = 402;
                     }
@@ -99,53 +85,75 @@ pub fn normal_mode(
             let x = tab.cursor_x as usize;
             let y = tab.cursor_y as usize;
             tab.saved = false;
-            if tab.input_box[y].is_empty() && tab.input_box.len() > 1
-            {
+            if tab.input_box[y].is_empty() && tab.input_box.len() > 1 {
                 tab.input_box.remove(y);
                 tab.cursor_x = 0;
-            }
-            else
-            {
-                if x < tab.input_box[y].len() {
-                    tab.input_box[y].remove(x);
-                }
+                tab.undo_stack.push(EditRecord::RemoveEmptyLine { row: y });
+                tab.redo_stack.clear();
+            } else if x < tab.input_box[y].len() {
+                let ch = tab.input_box[y].remove(x);
+                tab.undo_stack
+                    .push(EditRecord::DeleteChar { row: y, col: x, ch });
+                tab.redo_stack.clear();
             }
         }
         crossterm::event::KeyCode::Backspace => {
             let y = tab.cursor_y as usize;
             tab.saved = false;
-            if tab.input_box[y].is_empty() && y > 0
-            {
+            if tab.input_box[y].is_empty() && y > 0 {
                 tab.input_box.remove(y);
+                tab.undo_stack.push(EditRecord::RemoveEmptyLine { row: y });
                 tab.cursor_y -= 1;
+                tab.redo_stack.clear();
                 tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
                 return Ok(true);
-            }
-            else if tab.cursor_x > 0 {
+            } else if tab.cursor_x > 0 {
                 let x = tab.cursor_x as usize;
                 if let Some((prev_idx, ch)) = tab.input_box[y][..x].char_indices().next_back() {
                     tab.input_box[y].remove(prev_idx);
+                    tab.undo_stack.push(EditRecord::DeleteChar {
+                        row: y,
+                        col: prev_idx,
+                        ch,
+                    });
                     tab.cursor_x -= ch.len_utf8() as i32;
+                    tab.redo_stack.clear();
                 }
-            }
-            else {
-                if y > 0
-                {
+            } else {
+                if y > 0 {
                     let current = tab.input_box.remove(y);
                     let prev_line = &mut tab.input_box[y - 1];
                     tab.cursor_y -= 1;
                     tab.cursor_x = prev_line.len() as i32;
                     prev_line.push_str(&current);
+                    tab.undo_stack.push(EditRecord::MergeLine {
+                        row: y - 1,
+                        prev_len: tab.cursor_x as usize,
+                    });
+                    tab.redo_stack.clear();
                 }
+            }
+        }
+        crossterm::event::KeyCode::Char('z') => {
+            if let Some(record) = tab.undo_stack.pop() {
+                let (row, col) = apply_inverse(&record, &mut tab.input_box);
+                tab.cursor_y = row as i32;
+                tab.cursor_x = col as i32;
+                tab.redo_stack.push(record);
+            }
+        }
+        crossterm::event::KeyCode::Char('r') => {
+            if let Some(record) = tab.redo_stack.pop() {
+                let (row, col) = apply_forward(&record, &mut tab.input_box);
+                tab.cursor_y = row as i32;
+                tab.cursor_x = col as i32;
+                tab.undo_stack.push(record);
             }
         }
         _ => {}
     }
     Ok(true)
 }
-
-
-
 
 pub fn insert_mode(
     tab: &mut Tab,
@@ -165,7 +173,12 @@ pub fn insert_mode(
         crossterm::event::KeyCode::Char(c) => {
             let blen = c.len_utf8() as i32;
             tab.saved = false;
-            tab.input_box[tab.cursor_y as usize].insert(tab.cursor_x as usize, c);
+            let row = tab.cursor_y as usize;
+            let col = tab.cursor_x as usize;
+            tab.input_box[row].insert(col, c);
+            tab.undo_stack
+                .push(EditRecord::InsertChar { row, col, ch: c });
+            tab.redo_stack.clear();
             tab.cursor_x += blen;
         }
 
@@ -174,38 +187,49 @@ pub fn insert_mode(
             let x = tab.cursor_x as usize;
             let rest = tab.input_box[y].split_off(x);
             tab.input_box.insert(y + 1, rest);
-            // tab.input_box[y].push('\n');
+            tab.undo_stack
+                .push(EditRecord::SplitLine { row: y, col: x });
+            tab.redo_stack.clear();
             tab.cursor_x = 0;
             tab.cursor_y += 1;
         }
         crossterm::event::KeyCode::Tab => {
             tab.saved = false;
-            tab.input_box[tab.cursor_y as usize].insert_str(tab.cursor_x as usize, "    ");
+            let row = tab.cursor_y as usize;
+            let col = tab.cursor_x as usize;
+            tab.input_box[row].insert_str(col, "    ");
+            tab.undo_stack.push(EditRecord::InsertString {
+                row,
+                col,
+                text: "    ".to_string(),
+            });
+            tab.redo_stack.clear();
             tab.cursor_x += 4;
         }
         crossterm::event::KeyCode::Delete => {
             let x = tab.cursor_x as usize;
             let y = tab.cursor_y as usize;
             tab.saved = false;
-            if tab.input_box[y].is_empty() && tab.input_box.len() > 1
-            {
+            if tab.input_box[y].is_empty() && tab.input_box.len() > 1 {
                 tab.input_box.remove(y);
                 tab.cursor_x = 0;
-            }
-            else
-            {
-                if x < tab.input_box[y].len() {
-                    tab.input_box[y].remove(x);
-                }
+                tab.undo_stack.push(EditRecord::RemoveEmptyLine { row: y });
+                tab.redo_stack.clear();
+            } else if x < tab.input_box[y].len() {
+                let ch = tab.input_box[y].remove(x);
+                tab.undo_stack
+                    .push(EditRecord::DeleteChar { row: y, col: x, ch });
+                tab.redo_stack.clear();
             }
         }
         crossterm::event::KeyCode::Backspace => {
             let y = tab.cursor_y as usize;
             tab.saved = false;
-            if tab.input_box[y].is_empty() && y > 0
-            {
+            if tab.input_box[y].is_empty() && y > 0 {
                 tab.input_box.remove(y);
+                tab.undo_stack.push(EditRecord::RemoveEmptyLine { row: y });
                 tab.cursor_y -= 1;
+                tab.redo_stack.clear();
                 tab.cursor_x = text[tab.cursor_y as usize].len() as i32;
                 return Ok(true);
             }
@@ -213,17 +237,26 @@ pub fn insert_mode(
                 let x = tab.cursor_x as usize;
                 if let Some((prev_idx, ch)) = tab.input_box[y][..x].char_indices().next_back() {
                     tab.input_box[y].remove(prev_idx);
+                    tab.undo_stack.push(EditRecord::DeleteChar {
+                        row: y,
+                        col: prev_idx,
+                        ch,
+                    });
+                    tab.redo_stack.clear();
                     tab.cursor_x -= ch.len_utf8() as i32;
                 }
-            }
-            else {
-                if y > 0
-                {
+            } else {
+                if y > 0 {
                     let current = tab.input_box.remove(y);
                     let prev_line = &mut tab.input_box[y - 1];
                     tab.cursor_y -= 1;
                     tab.cursor_x = prev_line.len() as i32;
                     prev_line.push_str(&current);
+                    tab.undo_stack.push(EditRecord::MergeLine {
+                        row: y - 1,
+                        prev_len: tab.cursor_x as usize,
+                    });
+                    tab.redo_stack.clear();
                 }
             }
         }
@@ -235,10 +268,8 @@ pub fn insert_mode(
 pub fn unsaved_work_mode(
     event_key: crossterm::event::KeyEvent,
     mode: &mut i32,
-) -> std::io::Result<bool>
-{
-    match event_key.code
-    {
+) -> std::io::Result<bool> {
+    match event_key.code {
         crossterm::event::KeyCode::Char('y') => {
             return Ok(false);
         }

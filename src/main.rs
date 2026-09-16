@@ -96,10 +96,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         }
                     }
                     ////////////////////// UNSAVED WORK MODE ////////////////////////////////
-                    
                     403 => {
-                        if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap()
-                        {
+                        if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
                             break;
                         }
                     }
@@ -156,9 +154,7 @@ fn renderer(
         402 => {
             footer_text = format!(" Can't save file ");
         }
-        403 => {
-            footer_text = format!("you have unsaved work, quit anyway? [y/n]")
-        }
+        403 => footer_text = format!("you have unsaved work, quit anyway? [y/n]"),
         _ => {
             footer_text =
                 "SOME ERRORS, try to relaunch the program                   BLUR V0.1".to_string();
@@ -196,7 +192,7 @@ fn renderer(
             if tab.saved {
                 tab.file_name.clone()
             } else {
-                format!("*{}",tab.file_name.clone())
+                format!("*{}", tab.file_name.clone())
             }
         }
     );
