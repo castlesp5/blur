@@ -1,8 +1,9 @@
 use crate::controls::{controls, default_controls};
-use crate::helpers::{EditRecord, Tab, apply_forward, apply_inverse};
+use crate::helpers::{EditRecord, Tab, Visual, apply_forward, apply_inverse};
 
 pub fn normal_mode(
     tab: &mut Tab,
+    vis: &mut Visual,
     event_key: crossterm::event::KeyEvent,
     mode: &mut i32,
     the_command_line: &mut String,
@@ -163,10 +164,64 @@ pub fn normal_mode(
                 tab.undo_stack.push(record);
             }
         }
+        crossterm::event::KeyCode::Char('v') => {
+            *mode = 2;
+            vis.v_x = tab.cursor_x as usize;
+            vis.v_y = tab.cursor_y as usize;
+            vis.on = true;
+            // crate::helpers::log(&format!("{} , {} --> {}", vis.v_x, vis.v_y, vis.on)); //  implement the visual mode
+                                                                       //  function don't forget to
+                                                                       //  !!!
+        }
         _ => {}
     }
     Ok(true)
 }
+
+pub fn select_mode(
+    tab: &mut Tab,
+    vis: &mut Visual,
+    event_key: crossterm::event::KeyEvent,
+    mode: &mut i32,
+) -> std::io::Result<bool>
+{
+    // /////////////////////////////// UNICODE ERRORS TO FIX LATER :) ///////////////////////////////////
+    if controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, &mut tab.input_box)? {
+        return Ok(true);
+    }
+    match event_key.code {
+        crossterm::event::KeyCode::Esc => {
+            *mode = 0;
+            return Ok(false);
+        }
+        crossterm::event::KeyCode::Char('d') => {
+            crate::helpers::log(&format!("{}, {} -->", tab.cursor_x, vis.v_x));
+            let line = &mut tab.input_box[tab.cursor_y as usize];
+
+            tab.saved = false;
+            if tab.cursor_x as usize > vis.v_x {
+                let start_byte = line
+                    .char_indices()
+                    .nth(vis.v_x)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(line.len());
+
+                let end_byte = line
+                    .char_indices()
+                    .nth(tab.cursor_x as usize)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(line.len());
+                crate::helpers::log(&format!("{}, {} -->", start_byte, end_byte));
+
+                line.drain(start_byte..end_byte);
+                tab.cursor_x = vis.v_x as i32;
+            }
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
 
 pub fn insert_mode(
     tab: &mut Tab,
@@ -187,8 +242,6 @@ pub fn insert_mode(
         }
         filled_now.clear();
     }
-
-
     if default_controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, text)? {
         return Ok(true);
     }

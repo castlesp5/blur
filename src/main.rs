@@ -2,12 +2,13 @@ mod controls;
 mod helpers;
 mod modes;
 
-use helpers::{Highlighter, Tab, fg_color};
+use helpers::{Highlighter, Tab, Visual, fg_color};
 use ratatui::layout::Alignment;
 use ratatui::style::*;
 use ratatui::text::*;
 use ratatui::*;
 use unicode_width::UnicodeWidthStr;
+
 
 fn main() -> std::io::Result<()> {
     ratatui::run(app)?;
@@ -21,6 +22,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 
     let mut tab = Tab::new();
     let highlighter = Highlighter::new(&theme);
+    let mut vis = Visual::new();
     let mut mode = 0;
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
@@ -63,6 +65,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         ////////////////////// NORMAL MODE ////////////////////////
                         if !modes::normal_mode(
                             &mut tab,
+                            &mut vis,
                             *event_key,
                             &mut mode,
                             &mut the_command_line,
@@ -78,6 +81,14 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut the_text, &mut filled_now)
                             .unwrap()
                         {
+                            continue;
+                        }
+                    }
+                    2 => {
+                        //////////////////////// SELECT MODE ////////////////////////////////////
+                        if !modes::select_mode(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        {
+                            mode = 0;
                             continue;
                         }
                     }
@@ -142,6 +153,9 @@ fn renderer(
         }
         1 => {
             footer_text = format!(" INSERT ");
+        }
+        2 => {
+            footer_text = format!(" SELECT ");
         }
         10 => {
             footer_text = format!(" Save file into: {} ", the_command_line);

@@ -1,5 +1,25 @@
 use syntect::parsing::SyntaxSet;
 
+
+
+pub struct Visual {
+            pub v_x: usize,
+            pub v_y: usize,
+            pub on : bool,
+}
+
+impl Visual {
+    pub fn new() -> Self {
+        Visual { v_x: 0, v_y: 0, on: false}
+    }
+
+}
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 fn wcag_contrast(l1: f64, l2: f64) -> f64 {
     let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
     (lighter + 0.05) / (darker + 0.05)
