@@ -47,6 +47,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             renderer(
                 frame,
                 &theme,
+                &tab_selector,
                 &mut tab,
                 &highlighter,
                 mode,
@@ -78,11 +79,12 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         )
                         .unwrap()
                         {
-                            if tab_selector > 0
+                            if tabs.len() > 0
                             {
                                 tabs.remove(tab_selector);
                                 if tab_selector >= tabs.len() - 1
                                 {
+                                    crate::helpers::log(&format!("{}", tab_selector));
                                     tab_selector -= 1;
                                 }
                                 mode = 0;
@@ -134,7 +136,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     ////////////////////// UNSAVED WORK MODE ////////////////////////////////
                     403 => {
                         if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
-                            if tab_selector > 0
+                            if tabs.len() > 0
                             {
                                 tabs.remove(tab_selector);
                                 if tab_selector >= tabs.len() - 1
@@ -166,6 +168,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 fn renderer(
     frame: &mut Frame,
     theme: &opaline::Theme,
+    tab_selector: &usize,
     tab: &mut Tab,
     highlighter: &Highlighter,
     mode: i32,
@@ -240,12 +243,12 @@ fn renderer(
     let footer_file_name = format!(
         " {} ",
         if tab.file_name.is_empty() {
-            "[Empty File]*".to_string()
+            format!("[Empty File]* | {}", tab_selector)
         } else {
             if tab.saved {
-                tab.file_name.clone()
+                format!("{} | {}", tab.file_name.clone(), tab_selector)
             } else {
-                format!("*{}", tab.file_name.clone())
+                format!("*{} | {}", tab.file_name.clone(), tab_selector)
             }
         }
     );
