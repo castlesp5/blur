@@ -188,7 +188,7 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         }
 
         EditRecord::InsertString { row, col, text } => {
-            let end = col + text.chars().count();
+            let end = col + text.len();
             input_box[*row].replace_range(*col..end, "");
             (*row, *col)
         }
@@ -244,7 +244,7 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         }
 
         EditRecord::RemoveString { row, col, text } => {
-            let end = col + text.chars().count();
+            let end = col + text.len();
             input_box[*row].replace_range(*col..end, "");
             (*row, *col)
         }
