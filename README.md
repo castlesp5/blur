@@ -1,5 +1,6 @@
 # blur
-
+# NOTE from castlesp5:  
+ The Editor is currently under construction, if you found any bug please report it as soon as possible to fix it, V1.0 is gonna be out soon :)
 A minimal, vim-inspired terminal text editor written in Rust, built on top of [`ratatui`](https://github.com/ratatui-org/ratatui), [`crossterm`](https://github.com/crossterm-rs/crossterm), [`syntect`](https://github.com/trishume/syntect), and [`opaline`](https://github.com/hyperb1iss/opaline).
 
 ```
