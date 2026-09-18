@@ -2,17 +2,51 @@ use crate::controls::{controls, default_controls};
 use crate::helpers::{EditRecord, Tab, Visual, apply_forward, apply_inverse};
 
 pub fn normal_mode(
-    tab: &mut Tab,
+    tabs: &mut Vec<Tab>,
+    tab_selector: &mut usize,
+    // tab: &mut Tab,
     vis: &mut Visual,
     event_key: crossterm::event::KeyEvent,
     mode: &mut i32,
     the_command_line: &mut String,
     text: &mut Vec<String>,
 ) -> std::io::Result<bool> {
+    let mut tab = &mut tabs[*tab_selector];
     if controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, text).unwrap() {
         return Ok(true);
     }
     match event_key.code {
+        crossterm::event::KeyCode::Char('N') => {
+            tabs.push(Tab::new());
+            *tab_selector += 1;
+        }
+        crossterm::event::KeyCode::Char('q') => {
+            if !tab.saved {
+                *mode = 403;
+            } else {
+                return Ok(false);
+            }
+        }
+        crossterm::event::KeyCode::Tab | crossterm::event::KeyCode::Char('n') => {
+            if *tab_selector < tabs.len() - 1
+            {
+                *tab_selector += 1;
+            }
+            else 
+            {
+                *tab_selector = 0;
+            }
+        }
+        crossterm::event::KeyCode::BackTab => {
+            if *tab_selector > 0
+            {
+                *tab_selector -= 1;
+            }
+            else 
+            {
+                *tab_selector = tabs.len() - 1;
+            }
+        }
         crossterm::event::KeyCode::Char('a') => {
             if (tab.cursor_x as usize) < text[tab.cursor_y as usize].len() {
                 tab.cursor_x += 1;
@@ -26,8 +60,29 @@ pub fn normal_mode(
             if tab.cursor_y as usize > 0
             {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
+                tab.saved = false;
                 tab.input_box.insert(tab.cursor_y as usize - 1, text);
                 tab.cursor_y -= 1
+            }
+        }
+        crossterm::event::KeyCode::Char('J') => {
+            if (tab.cursor_y as usize) < tab.input_box.len() - 1
+            {
+                let text = tab.input_box.remove(tab.cursor_y as usize);
+                tab.saved = false;
+                tab.input_box.insert(tab.cursor_y as usize + 1, text);
+                tab.cursor_y += 1;
+            }
+        }
+        crossterm::event::KeyCode::Char('>') => {
+            tab.saved = false;
+            tab.input_box[tab.cursor_y as usize].insert_str(0, "    ");
+        }
+        crossterm::event::KeyCode::Char('<') => {
+            tab.saved = false;
+            if &tab.input_box[tab.cursor_y as usize][0..4] == "    "
+            {
+                tab.input_box[tab.cursor_y as usize].replace_range(0..4, "");
             }
         }
         crossterm::event::KeyCode::Char('e') => {
@@ -60,13 +115,6 @@ pub fn normal_mode(
             tab.cursor_y += 1;
             tab.cursor_x = 0;
             *mode = 1;
-        }
-        crossterm::event::KeyCode::Char('q') => {
-            if !tab.saved {
-                *mode = 403;
-            } else {
-                return Ok(false);
-            }
         }
         crossterm::event::KeyCode::Char('w') => {
             if tab.file_name.len() > 0 {

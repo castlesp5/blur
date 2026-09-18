@@ -20,26 +20,29 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let theme = opaline::load_by_name("catppuccin-mocha").unwrap();
 
-    let mut tab = Tab::new();
+    let mut tabs = Vec::new();
+    let mut tab_selector: usize = 0;
     let highlighter = Highlighter::new(&theme);
     let mut vis = Visual::new();
     let mut mode = 0;
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
+    tabs.push(Tab::new());
     match args.len() {
         1 => {}
         _ => match std::fs::read_to_string(&args[1]) {
             Ok(content) => {
-                tab.input_box = content.split('\n').map(|line| line.to_string()).collect();
-                tab.file_name = args[1].clone();
+                tabs[0].input_box = content.split('\n').map(|line| line.to_string()).collect();
+                tabs[0].file_name = args[1].clone();
             }
             Err(_) => {
-                tab.input_box = vec![String::new()];
-                tab.file_name = args[1].clone();
+                tabs[0].input_box = vec![String::new()];
+                tabs[0].file_name = args[1].clone();
             }
         },
     }
     loop {
+        let mut tab = &mut tabs[tab_selector];
         terminal.draw(|frame| {
             renderer(
                 frame,
@@ -64,7 +67,9 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     0 => {
                         ////////////////////// NORMAL MODE ////////////////////////
                         if !modes::normal_mode(
-                            &mut tab,
+                            &mut tabs,
+                            &mut tab_selector,
+                            // &mut tab,
                             &mut vis,
                             *event_key,
                             &mut mode,
@@ -73,7 +78,18 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         )
                         .unwrap()
                         {
-                            break;
+                            if tab_selector > 0
+                            {
+                                tabs.remove(tab_selector);
+                                if tab_selector >= tabs.len() - 1
+                                {
+                                    tab_selector -= 1;
+                                }
+                                mode = 0;
+                            }
+                            else {
+                                break;
+                            }
                         }
                     }
                     1 => {
@@ -118,7 +134,18 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     ////////////////////// UNSAVED WORK MODE ////////////////////////////////
                     403 => {
                         if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
-                            break;
+                            if tab_selector > 0
+                            {
+                                tabs.remove(tab_selector);
+                                if tab_selector >= tabs.len() - 1
+                                {
+                                    tab_selector -= 1;
+                                }
+                                mode = 0;
+                            }
+                            else {
+                                break;
+                            }
                         }
                     }
                     _ => {
