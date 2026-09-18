@@ -174,12 +174,67 @@ pub fn normal_mode(
             vis.v_y = tab.cursor_y as usize;
             vis.on = true;
         }
+        crossterm::event::KeyCode::Char('V') => {
+            *mode = 3;
+            vis.v_x = tab.cursor_x as usize;
+            vis.v_y = tab.cursor_y as usize;
+            vis.on = true;
+        }
         _ => {}
     }
     Ok(true)
 }
 
-pub fn select_mode(
+
+pub fn select_mode_line(
+    tab: &mut Tab,
+    vis: &mut Visual,
+    event_key: crossterm::event::KeyEvent,
+    mode: &mut i32,
+) -> std::io::Result<bool>
+{
+    if controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, &mut tab.input_box)? {
+        return Ok(true);
+    }
+    match event_key.code {
+        crossterm::event::KeyCode::Esc => {
+            *mode = 0;
+            return Ok(false);
+        }
+        crossterm::event::KeyCode::Char('d') => {
+            // let line = &mut tab.input_box[tab.cursor_y as usize];
+
+            tab.saved = false;
+            if tab.cursor_y as usize > vis.v_y {
+                for _ in vis.v_y..tab.cursor_y as usize + 1
+                {
+                    tab.undo_stack.push(EditRecord::RemoveLine {
+                        row: vis.v_y,
+                        content: tab.input_box[vis.v_y].to_string(),
+                    });
+                    tab.redo_stack.clear();
+                    tab.input_box.remove(vis.v_y);
+                }
+                tab.cursor_y = vis.v_y as i32;
+            }
+            else if vis.v_y > tab.cursor_y as usize {
+                for _ in tab.cursor_y as usize..vis.v_y + 1
+                {
+                    tab.undo_stack.push(EditRecord::RemoveLine {
+                        row: tab.cursor_y as usize,
+                        content: tab.input_box[tab.cursor_y as usize].to_string(),
+                    });
+                    tab.redo_stack.clear();
+                    tab.input_box.remove(tab.cursor_y as usize);
+                }
+            }
+        }
+        _ => {*mode = 0}
+    }
+    Ok(false)
+}
+
+pub fn select_mode1(
     tab: &mut Tab,
     vis: &mut Visual,
     event_key: crossterm::event::KeyEvent,

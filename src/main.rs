@@ -86,7 +86,15 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                     2 => {
                         //////////////////////// SELECT MODE ////////////////////////////////////
-                        if !modes::select_mode(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        if !modes::select_mode1(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        {
+                            mode = 0;
+                            continue;
+                        }
+                    }
+                    3 => {
+                        //////////////////////// SELECT-LINE MODE ////////////////////////////////////
+                        if !modes::select_mode_line(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
                         {
                             mode = 0;
                             continue;
@@ -156,6 +164,9 @@ fn renderer(
         }
         2 => {
             footer_text = format!(" SELECT ");
+        }
+        3 => {
+            footer_text = format!(" SELECT-LINE ");
         }
         10 => {
             footer_text = format!(" Save file into: {} ", the_command_line);
