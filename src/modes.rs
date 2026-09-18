@@ -22,6 +22,14 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Char('i') => {
             *mode = 1;
         }
+        crossterm::event::KeyCode::Char('K') => {
+            if tab.cursor_y as usize > 0
+            {
+                let text = tab.input_box.remove(tab.cursor_y as usize);
+                tab.input_box.insert(tab.cursor_y as usize - 1, text);
+                tab.cursor_y -= 1
+            }
+        }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
             let new_x = match text[tab.cursor_y as usize][start..].find(' ') {
