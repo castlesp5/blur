@@ -150,6 +150,11 @@ pub enum EditRecord {
         col: usize,
         text: String,
     },
+    RemoveString {
+        row: usize,
+        col : usize,
+        text: String,
+    },
     SplitLine {
         row: usize,
         col: usize,
@@ -185,6 +190,11 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         EditRecord::InsertString { row, col, text } => {
             let end = col + text.chars().count();
             input_box[*row].replace_range(*col..end, "");
+            (*row, *col)
+        }
+
+        EditRecord::RemoveString { row, col, text } => {
+            input_box[*row].insert_str(*col, text);
             (*row, *col)
         }
 
@@ -231,6 +241,12 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         EditRecord::InsertString { row, col, text } => {
             input_box[*row].insert_str(*col, text);
             (*row, *col + text.len())
+        }
+
+        EditRecord::RemoveString { row, col, text } => {
+            let end = col + text.chars().count();
+            input_box[*row].replace_range(*col..end, "");
+            (*row, *col)
         }
 
         EditRecord::SplitLine { row, col } => {

@@ -138,6 +138,10 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Char('d') => {
             let y = tab.cursor_y as usize;
             let line = tab.input_box.remove(y);
+            tab.cursor_x = 0;
+            if tab.input_box.len() == 0 {
+                tab.input_box.push(String::new());
+            }
 
             tab.undo_stack.push(EditRecord::RemoveLine {
                 row: y,
@@ -169,9 +173,6 @@ pub fn normal_mode(
             vis.v_x = tab.cursor_x as usize;
             vis.v_y = tab.cursor_y as usize;
             vis.on = true;
-            // crate::helpers::log(&format!("{} , {} --> {}", vis.v_x, vis.v_y, vis.on)); //  implement the visual mode
-                                                                       //  function don't forget to
-                                                                       //  !!!
         }
         _ => {}
     }
@@ -185,7 +186,6 @@ pub fn select_mode(
     mode: &mut i32,
 ) -> std::io::Result<bool>
 {
-    // /////////////////////////////// UNICODE ERRORS TO FIX LATER :) ///////////////////////////////////
     if controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, &mut tab.input_box)? {
         return Ok(true);
     }
@@ -195,29 +195,35 @@ pub fn select_mode(
             return Ok(false);
         }
         crossterm::event::KeyCode::Char('d') => {
-            crate::helpers::log(&format!("{}, {} -->", tab.cursor_x, vis.v_x));
-            let line = &mut tab.input_box[tab.cursor_y as usize];
+            if tab.cursor_y as usize == vis.v_y
+            {
+                let line = &mut tab.input_box[tab.cursor_y as usize];
 
-            tab.saved = false;
-            if tab.cursor_x as usize > vis.v_x {
-                let start_byte = line
-                    .char_indices()
-                    .nth(vis.v_x)
-                    .map(|(idx, _)| idx)
-                    .unwrap_or(line.len());
+                tab.saved = false;
+                if tab.cursor_x as usize > vis.v_x {
+                    tab.undo_stack.push(EditRecord::RemoveString {
+                        row: tab.cursor_y as usize,
+                        col: vis.v_x,
+                        text: line[vis.v_x..tab.cursor_x as usize].to_string(),
+                    });
+                    tab.redo_stack.clear();
 
-                let end_byte = line
-                    .char_indices()
-                    .nth(tab.cursor_x as usize)
-                    .map(|(idx, _)| idx)
-                    .unwrap_or(line.len());
-                crate::helpers::log(&format!("{}, {} -->", start_byte, end_byte));
+                    line.drain(vis.v_x..tab.cursor_x as usize);
 
-                line.drain(start_byte..end_byte);
-                tab.cursor_x = vis.v_x as i32;
+                    tab.cursor_x = vis.v_x as i32;
+                }
+                else if vis.v_x > tab.cursor_x as usize {
+                    tab.undo_stack.push(EditRecord::RemoveString {
+                        row: tab.cursor_y as usize,
+                        col: tab.cursor_x as usize,
+                        text: line[tab.cursor_x as usize..vis.v_x].to_string(),
+                    });
+                    tab.redo_stack.clear();
+                    line.drain(tab.cursor_x as usize..vis.v_x);
+                }
             }
         }
-        _ => {}
+        _ => {*mode = 0}
     }
     Ok(false)
 }
