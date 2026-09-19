@@ -47,6 +47,14 @@ pub fn normal_mode(
                 *tab_selector = tabs.len() - 1;
             }
         }
+        crossterm::event::KeyCode::Char('g') => {
+            tab.cursor_y = 0;
+            tab.cursor_x = 0;
+        }
+        crossterm::event::KeyCode::Char('G') => {
+            tab.cursor_y = tab.input_box.len() as i32 - 1;
+            tab.cursor_x = 0;
+        }
         crossterm::event::KeyCode::Char('a') => {
             if (tab.cursor_x as usize) < text[tab.cursor_y as usize].len() {
                 tab.cursor_x += 1;
@@ -54,11 +62,7 @@ pub fn normal_mode(
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('i') => {
-            *mode = 1;
-        }
-        crossterm::event::KeyCode::Char('K') => {
-            if tab.cursor_y as usize > 0
-            {
+            *mode = 1; } crossterm::event::KeyCode::Char('K') => { if tab.cursor_y as usize > 0 {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
                 tab.saved = false;
                 tab.input_box.insert(tab.cursor_y as usize - 1, text);
@@ -76,14 +80,29 @@ pub fn normal_mode(
         }
         crossterm::event::KeyCode::Char('>') => {
             tab.saved = false;
+            tab.undo_stack.push(EditRecord::InsertString {
+                row: tab.cursor_y as usize,
+                col: 0,
+                text: "    ".to_string(),
+            });
+            tab.redo_stack.clear();
             tab.input_box[tab.cursor_y as usize].insert_str(0, "    ");
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+            crate::helpers::log("test");
         }
         crossterm::event::KeyCode::Char('<') => {
             tab.saved = false;
-            if &tab.input_box[tab.cursor_y as usize][0..4] == "    "
+            if tab.input_box[tab.cursor_y as usize].starts_with("    ")
             {
+                tab.undo_stack.push(EditRecord::RemoveString {
+                    row: tab.cursor_y as usize,
+                    col: 0,
+                    text: "    ".to_string(),
+                });
+                tab.redo_stack.clear();
                 tab.input_box[tab.cursor_y as usize].replace_range(0..4, "");
             }
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
@@ -198,6 +217,10 @@ pub fn normal_mode(
             if tab.input_box.len() == 0 {
                 tab.input_box.push(String::new());
             }
+            if y == tab.input_box.len()
+            {
+                tab.cursor_y -= 1;
+            }
 
             tab.undo_stack.push(EditRecord::RemoveLine {
                 row: y,
@@ -257,9 +280,73 @@ pub fn select_mode_line(
             *mode = 0;
             return Ok(false);
         }
+        crossterm::event::KeyCode::Char('>') => {
+            tab.saved = false;
+            if tab.cursor_y as usize > vis.v_y
+            {
+                for i in vis.v_y..tab.cursor_y as usize + 1
+                {
+                    tab.undo_stack.push(EditRecord::InsertString {
+                        row: i,
+                        col: 0,
+                        text: "    ".to_string(),
+                    });
+                    tab.redo_stack.clear();
+                    tab.input_box[i].insert_str(0, "    ");
+                }
+            }
+            else 
+            {
+                for i in tab.cursor_y as usize..vis.v_y + 1
+                {
+                    tab.undo_stack.push(EditRecord::InsertString {
+                        row: i,
+                        col: 0,
+                        text: "    ".to_string(),
+                    });
+                    tab.redo_stack.clear();
+                    tab.input_box[i].insert_str(0, "    ");
+                }
+            }
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+        }
+        crossterm::event::KeyCode::Char('<') => {
+            tab.saved = false;
+            if tab.cursor_y as usize > vis.v_y
+            {
+                for i in vis.v_y..tab.cursor_y as usize + 1
+                {
+                    if tab.input_box[i].starts_with("    ")
+                    {
+                        tab.undo_stack.push(EditRecord::RemoveString {
+                            row: i,
+                            col: 0,
+                            text: "    ".to_string(),
+                        });
+                        tab.redo_stack.clear();
+                        tab.input_box[i].replace_range(0..4, "");
+                    }
+                }
+            }
+            else
+            {
+                for i in tab.cursor_y as usize..vis.v_y + 1
+                {
+                    if tab.input_box[i].starts_with("    ")
+                    {
+                        tab.undo_stack.push(EditRecord::RemoveString {
+                            row: i,
+                            col: 0,
+                            text: "    ".to_string(),
+                        });
+                        tab.redo_stack.clear();
+                        tab.input_box[i].replace_range(0..4, "");
+                    }
+                }
+            }
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+        }
         crossterm::event::KeyCode::Char('d') => {
-            // let line = &mut tab.input_box[tab.cursor_y as usize];
-
             tab.saved = false;
             if tab.cursor_y as usize > vis.v_y {
                 for _ in vis.v_y..tab.cursor_y as usize + 1
@@ -284,10 +371,11 @@ pub fn select_mode_line(
                     tab.input_box.remove(tab.cursor_y as usize);
                 }
             }
+            return Ok(false);
         }
         _ => {*mode = 0}
     }
-    Ok(false)
+    Ok(true)
 }
 
 pub fn select_mode1(

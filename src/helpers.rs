@@ -184,7 +184,7 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
 
         EditRecord::DeleteChar { row, col, ch } => {
             input_box[*row].insert(*col, *ch);
-            (*row, *col + 1)
+            (*row, *col + ch.len_utf8())
         }
 
         EditRecord::InsertString { row, col, text } => {

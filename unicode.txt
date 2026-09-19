@@ -1,1 +1,0 @@
-Héllo, 世界! 🦀 Rust is ünïcode-safe? Привет مرحبا 👍

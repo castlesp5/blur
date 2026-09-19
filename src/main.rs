@@ -70,7 +70,6 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         if !modes::normal_mode(
                             &mut tabs,
                             &mut tab_selector,
-                            // &mut tab,
                             &mut vis,
                             *event_key,
                             &mut mode,
@@ -79,10 +78,10 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         )
                         .unwrap()
                         {
-                            if tabs.len() > 0
+                            if tabs.len() > 1
                             {
                                 tabs.remove(tab_selector);
-                                if tab_selector >= tabs.len() - 1
+                                if tab_selector > tabs.len()
                                 {
                                     crate::helpers::log(&format!("{}", tab_selector));
                                     tab_selector -= 1;
@@ -136,10 +135,10 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     ////////////////////// UNSAVED WORK MODE ////////////////////////////////
                     403 => {
                         if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
-                            if tabs.len() > 0
+                            if tabs.len() > 1
                             {
                                 tabs.remove(tab_selector);
-                                if tab_selector >= tabs.len() - 1
+                                if tab_selector >= tabs.len()
                                 {
                                     tab_selector -= 1;
                                 }
