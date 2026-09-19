@@ -122,7 +122,7 @@ impl Tab {
     pub fn new() -> Self {
         Self {
             file_name: String::from(""),
-            saved: true,
+            saved: false,
             input_box: vec![String::new()],
             cursor_x: 0,
             cursor_y: 0,
