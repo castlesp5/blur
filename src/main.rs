@@ -2,12 +2,13 @@ mod controls;
 mod helpers;
 mod modes;
 
-use helpers::{Highlighter, Tab, fg_color};
+use helpers::{Highlighter, Tab, Visual, fg_color};
 use ratatui::layout::Alignment;
 use ratatui::style::*;
 use ratatui::text::*;
 use ratatui::*;
 use unicode_width::UnicodeWidthStr;
+
 
 fn main() -> std::io::Result<()> {
     ratatui::run(app)?;
@@ -19,29 +20,34 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let theme = opaline::load_by_name("catppuccin-mocha").unwrap();
 
-    let mut tab = Tab::new();
+    let mut tabs = Vec::new();
+    let mut tab_selector: usize = 0;
     let highlighter = Highlighter::new(&theme);
+    let mut vis = Visual::new();
     let mut mode = 0;
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
+    tabs.push(Tab::new());
     match args.len() {
         1 => {}
         _ => match std::fs::read_to_string(&args[1]) {
             Ok(content) => {
-                tab.input_box = content.split('\n').map(|line| line.to_string()).collect();
-                tab.file_name = args[1].clone();
+                tabs[0].input_box = content.split('\n').map(|line| line.to_string()).collect();
+                tabs[0].file_name = args[1].clone();
             }
             Err(_) => {
-                tab.input_box = vec![String::new()];
-                tab.file_name = args[1].clone();
+                tabs[0].input_box = vec![String::new()];
+                tabs[0].file_name = args[1].clone();
             }
         },
     }
     loop {
+        let mut tab = &mut tabs[tab_selector];
         terminal.draw(|frame| {
             renderer(
                 frame,
                 &theme,
+                &tab_selector,
                 &mut tab,
                 &highlighter,
                 mode,
@@ -62,7 +68,9 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     0 => {
                         ////////////////////// NORMAL MODE ////////////////////////
                         if !modes::normal_mode(
-                            &mut tab,
+                            &mut tabs,
+                            &mut tab_selector,
+                            &mut vis,
                             *event_key,
                             &mut mode,
                             &mut the_command_line,
@@ -70,7 +78,19 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         )
                         .unwrap()
                         {
-                            break;
+                            if tabs.len() > 1
+                            {
+                                tabs.remove(tab_selector);
+                                if tab_selector > tabs.len()
+                                {
+                                    crate::helpers::log(&format!("{}", tab_selector));
+                                    tab_selector -= 1;
+                                }
+                                mode = 0;
+                            }
+                            else {
+                                break;
+                            }
                         }
                     }
                     1 => {
@@ -78,6 +98,22 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         if !modes::insert_mode(&mut tab, *event_key, &mut mode, &mut the_text, &mut filled_now)
                             .unwrap()
                         {
+                            continue;
+                        }
+                    }
+                    2 => {
+                        //////////////////////// SELECT MODE ////////////////////////////////////
+                        if !modes::select_mode1(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        {
+                            mode = 0;
+                            continue;
+                        }
+                    }
+                    3 => {
+                        //////////////////////// SELECT-LINE MODE ////////////////////////////////////
+                        if !modes::select_mode_line(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        {
+                            mode = 0;
                             continue;
                         }
                     }
@@ -99,7 +135,18 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     ////////////////////// UNSAVED WORK MODE ////////////////////////////////
                     403 => {
                         if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
-                            break;
+                            if tabs.len() > 1
+                            {
+                                tabs.remove(tab_selector);
+                                if tab_selector >= tabs.len()
+                                {
+                                    tab_selector -= 1;
+                                }
+                                mode = 0;
+                            }
+                            else {
+                                break;
+                            }
                         }
                     }
                     _ => {
@@ -120,6 +167,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 fn renderer(
     frame: &mut Frame,
     theme: &opaline::Theme,
+    tab_selector: &usize,
     tab: &mut Tab,
     highlighter: &Highlighter,
     mode: i32,
@@ -142,6 +190,12 @@ fn renderer(
         }
         1 => {
             footer_text = format!(" INSERT ");
+        }
+        2 => {
+            footer_text = format!(" SELECT ");
+        }
+        3 => {
+            footer_text = format!(" SELECT-LINE ");
         }
         10 => {
             footer_text = format!(" Save file into: {} ", the_command_line);
@@ -188,12 +242,12 @@ fn renderer(
     let footer_file_name = format!(
         " {} ",
         if tab.file_name.is_empty() {
-            "[Empty File]*".to_string()
+            format!("[Empty File]* | {}", tab_selector)
         } else {
             if tab.saved {
-                tab.file_name.clone()
+                format!("{} | {}", tab.file_name.clone(), tab_selector)
             } else {
-                format!("*{}", tab.file_name.clone())
+                format!("*{} | {}", tab.file_name.clone(), tab_selector)
             }
         }
     );

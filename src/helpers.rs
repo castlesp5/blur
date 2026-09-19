@@ -1,5 +1,25 @@
 use syntect::parsing::SyntaxSet;
 
+
+
+pub struct Visual {
+            pub v_x: usize,
+            pub v_y: usize,
+            pub on : bool,
+}
+
+impl Visual {
+    pub fn new() -> Self {
+        Visual { v_x: 0, v_y: 0, on: false}
+    }
+
+}
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 fn wcag_contrast(l1: f64, l2: f64) -> f64 {
     let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
     (lighter + 0.05) / (darker + 0.05)
@@ -130,6 +150,11 @@ pub enum EditRecord {
         col: usize,
         text: String,
     },
+    RemoveString {
+        row: usize,
+        col : usize,
+        text: String,
+    },
     SplitLine {
         row: usize,
         col: usize,
@@ -159,12 +184,17 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
 
         EditRecord::DeleteChar { row, col, ch } => {
             input_box[*row].insert(*col, *ch);
-            (*row, *col + 1)
+            (*row, *col + ch.len_utf8())
         }
 
         EditRecord::InsertString { row, col, text } => {
-            let end = col + text.chars().count();
+            let end = col + text.len();
             input_box[*row].replace_range(*col..end, "");
+            (*row, *col)
+        }
+
+        EditRecord::RemoveString { row, col, text } => {
+            input_box[*row].insert_str(*col, text);
             (*row, *col)
         }
 
@@ -211,6 +241,12 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         EditRecord::InsertString { row, col, text } => {
             input_box[*row].insert_str(*col, text);
             (*row, *col + text.len())
+        }
+
+        EditRecord::RemoveString { row, col, text } => {
+            let end = col + text.len();
+            input_box[*row].replace_range(*col..end, "");
+            (*row, *col)
         }
 
         EditRecord::SplitLine { row, col } => {
