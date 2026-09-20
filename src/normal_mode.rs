@@ -124,6 +124,12 @@ pub fn normal_mode(
 
             tab.cursor_x = new_x;
         }
+        crossterm::event::KeyCode::Char('E') => {
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].len() as i32;
+        }
+        crossterm::event::KeyCode::Char('B') => {
+            tab.cursor_x = 0;
+        }
         crossterm::event::KeyCode::Char('o') => {
             tab.unsave();
             tab.input_box
