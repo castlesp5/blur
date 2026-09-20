@@ -91,7 +91,9 @@ The default mode for navigation and commands.
 | `g`            | Jump to the start of the file                       |
 | `G`            | Jump to the end of the file                         |
 | `e`            | Move to the end of the next word                    |
+| `E`            | Move to the end of the line                         |
 | `b`            | Move to the start of the previous word              |
+| `B`            | Move to the start of the line                        |
 | `i`            | Enter Insert mode at the cursor                      |
 | `a`            | Enter Insert mode, appending after the cursor        |
 | `o`            | Insert a new line below and enter Insert mode        |
