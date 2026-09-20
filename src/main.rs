@@ -1,6 +1,8 @@
 mod controls;
 mod helpers;
 mod modes;
+mod normal_mode;
+mod select_modes;
 
 use helpers::{Highlighter, Tab, Visual, fg_color};
 use ratatui::layout::Alignment;
@@ -8,6 +10,8 @@ use ratatui::style::*;
 use ratatui::text::*;
 use ratatui::*;
 use unicode_width::UnicodeWidthStr;
+use normal_mode::normal_mode;
+use select_modes::{select_mode1, select_mode_line};
 
 
 fn main() -> std::io::Result<()> {
@@ -67,7 +71,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 match mode {
                     0 => {
                         ////////////////////// NORMAL MODE ////////////////////////
-                        if !modes::normal_mode(
+                        if !normal_mode(
                             &mut tabs,
                             &mut tab_selector,
                             &mut vis,
@@ -103,7 +107,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                     2 => {
                         //////////////////////// SELECT MODE ////////////////////////////////////
-                        if !modes::select_mode1(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        if !select_mode1(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
                         {
                             mode = 0;
                             continue;
@@ -111,7 +115,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                     3 => {
                         //////////////////////// SELECT-LINE MODE ////////////////////////////////////
-                        if !modes::select_mode_line(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
+                        if !select_mode_line(&mut tab, &mut vis, *event_key, &mut mode).unwrap()
                         {
                             mode = 0;
                             continue;

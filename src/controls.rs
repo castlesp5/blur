@@ -2,7 +2,7 @@ pub fn default_controls(
     event_key: crossterm::event::KeyEvent,
     cursor_y: &mut i32,
     cursor_x: &mut i32,
-    text: &mut Vec<String>,
+    text: &Vec<String>,
 ) -> std::io::Result<bool> {
     let x = *cursor_x as usize;
     let y = *cursor_y as usize;
@@ -64,7 +64,7 @@ pub fn controls(
     event_key: crossterm::event::KeyEvent,
     cursor_y: &mut i32,
     cursor_x: &mut i32,
-    text: &mut Vec<String>,
+    text: &Vec<String>,
 ) -> std::io::Result<bool> {
     if default_controls(event_key, cursor_y, cursor_x, text)? {
         return Ok(true);

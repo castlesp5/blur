@@ -61,7 +61,11 @@ impl Highlighter {
         }
     }
 
-    pub fn highlight<'a>(&self, tab: &Tab) -> Vec<ratatui::text::Line<'a>> {
+    pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
+        if let Some(cached) = &tab.highlight_cache
+        {
+            return cached.clone();
+        }
         if tab.file_name.is_empty() {
             return tab
                 .input_box
@@ -100,6 +104,7 @@ impl Highlighter {
             }
             spans.push(ratatui::text::Line::from(spans_for_line));
         }
+        tab.highlight_cache = Some(spans.clone());
         return spans;
     }
 }
@@ -109,6 +114,7 @@ impl Highlighter {
 pub struct Tab {
     pub file_name: String,
     pub saved: bool,
+    pub highlight_cache: Option<Vec<ratatui::text::Line<'static>>>,
     pub input_box: Vec<String>,
     pub cursor_x: i32,
     pub cursor_y: i32,
@@ -123,6 +129,7 @@ impl Tab {
         Self {
             file_name: String::from(""),
             saved: false,
+            highlight_cache: None,
             input_box: vec![String::new()],
             cursor_x: 0,
             cursor_y: 0,
@@ -132,14 +139,15 @@ impl Tab {
             redo_stack: Vec::new(),
         }
     }
+
+    pub fn unsave(&mut self)
+    {
+        self.saved = false;
+        self.highlight_cache = None;
+    }
 }
 
 pub enum EditRecord {
-    InsertChar {
-        row: usize,
-        col: usize,
-        ch: char,
-    },
     DeleteChar {
         row: usize,
         col: usize,
@@ -177,11 +185,6 @@ pub enum EditRecord {
 
 pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize, usize) {
     match record {
-        EditRecord::InsertChar { row, col, .. } => {
-            input_box[*row].remove(*col);
-            (*row, *col)
-        }
-
         EditRecord::DeleteChar { row, col, ch } => {
             input_box[*row].insert(*col, *ch);
             (*row, *col + ch.len_utf8())
@@ -228,11 +231,6 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
 
 pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize, usize) {
     match record {
-        EditRecord::InsertChar { row, col, ch } => {
-            input_box[*row].insert(*col, *ch);
-            (*row, *col + ch.len_utf8())
-        }
-
         EditRecord::DeleteChar { row, col, .. } => {
             input_box[*row].remove(*col);
             (*row, *col)
