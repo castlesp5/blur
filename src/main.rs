@@ -38,6 +38,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             Ok(content) => {
                 tabs[0].input_box = content.split('\n').map(|line| line.to_string()).collect();
                 tabs[0].file_name = args[1].clone();
+                tabs[0].saved = true;
             }
             Err(_) => {
                 tabs[0].input_box = vec![String::new()];
@@ -288,7 +289,7 @@ fn renderer(
             Style::default().fg(theme.color("accent.primary").into()),
         ),
         Span::styled(
-            " Blur 0.1.1 ",
+            " Blur 0.9 ",
             Style::default()
                 .fg(fg_color(theme.color("accent.primary")))
                 .bg(theme.color("accent.primary").into())
