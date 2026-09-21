@@ -26,21 +26,27 @@ pub fn select_mode_line(
         }  
         crossterm::event::KeyCode::Char('K') =>
         {
-            if tab.cursor_y as usize > vis.v_y && vis.v_y > 0
+            if tab.cursor_y as usize > vis.v_y
             {
-                let line = tab.input_box.remove(vis.v_y - 1);
-                tab.unsave();
-                tab.input_box.insert(tab.cursor_y as usize , line.clone());
-                vis.v_y -= 1;
-                tab.cursor_y -= 1;
+                if vis.v_y > 0
+                {
+                    let line = tab.input_box.remove(vis.v_y - 1);
+                    tab.unsave();
+                    tab.input_box.insert(tab.cursor_y as usize , line.clone());
+                    vis.v_y -= 1;
+                    tab.cursor_y -= 1;
+                }
             }
-            else if vis.v_y > tab.cursor_y as usize && tab.cursor_y > 0
+            else if vis.v_y > tab.cursor_y as usize
             {
-                let line = tab.input_box.remove(tab.cursor_y as usize - 1);
-                tab.unsave();
-                tab.input_box.insert(vis.v_y , line.clone());
-                vis.v_y -= 1;
-                tab.cursor_y -= 1;
+                if tab.cursor_y > 0
+                {
+                    let line = tab.input_box.remove(tab.cursor_y as usize - 1);
+                    tab.unsave();
+                    tab.input_box.insert(vis.v_y , line.clone());
+                    vis.v_y -= 1;
+                    tab.cursor_y -= 1;
+                }
             }
             else                                                                                   
             {                                                                                      
@@ -56,21 +62,27 @@ pub fn select_mode_line(
         }
         crossterm::event::KeyCode::Char('J') =>
         {
-            if tab.cursor_y as usize > vis.v_y && (tab.cursor_y as usize) < tab.input_box.len() - 1
+            if tab.cursor_y as usize > vis.v_y 
             {
-                let line = tab.input_box.remove(tab.cursor_y as usize + 1);
-                tab.unsave();
-                tab.input_box.insert(vis.v_y, line.clone());
-                vis.v_y += 1;
-                tab.cursor_y += 1;
+                if (tab.cursor_y as usize) < tab.input_box.len() - 1
+                {
+                    let line = tab.input_box.remove(tab.cursor_y as usize + 1);
+                    tab.unsave();
+                    tab.input_box.insert(vis.v_y, line.clone());
+                    vis.v_y += 1;
+                    tab.cursor_y += 1;
+                }
             }
-            else if vis.v_y > tab.cursor_y as usize && vis.v_y < tab.input_box.len() - 1
+            else if vis.v_y > tab.cursor_y as usize
             {
-                let line = tab.input_box.remove(vis.v_y + 1);
-                tab.unsave();
-                tab.input_box.insert(tab.cursor_y as usize, line.clone());
-                vis.v_y += 1;
-                tab.cursor_y += 1;
+                if vis.v_y < tab.input_box.len() - 1
+                {
+                    let line = tab.input_box.remove(vis.v_y + 1);
+                    tab.unsave();
+                    tab.input_box.insert(tab.cursor_y as usize, line.clone());
+                    vis.v_y += 1;
+                    tab.cursor_y += 1;
+                }
             }
             else
             {
@@ -196,6 +208,20 @@ pub fn select_mode1(
         crossterm::event::KeyCode::Esc => {
             *mode = 0;
             return Ok(false);
+        }
+        crossterm::event::KeyCode::Char('>') => {
+            if tab.cursor_x < vis.v_x as i32
+            {
+                let line = &mut tab.input_box[tab.cursor_y as usize];
+                let character = line.remove(vis.v_x + 1);
+                line.insert(tab.cursor_x as usize - 1, character);
+            }
+            else if vis.v_x < tab.cursor_x as usize
+            {
+                let line = &mut tab.input_box[tab.cursor_y as usize];
+                let character = line.remove(tab.cursor_x as usize + 1);
+                line.insert(vis.v_x - 1, character);
+            }
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
