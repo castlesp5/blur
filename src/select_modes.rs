@@ -174,6 +174,15 @@ pub fn select_mode_line(
                     tab.redo_stack.clear();
                     tab.input_box.remove(vis.v_y);
                 }
+                if tab.input_box.is_empty()
+                {
+                    tab.input_box.push(String::new());
+                    tab.cursor_y = 0;
+                }
+                else
+                {
+                    tab.cursor_y = vis.v_y as i32;
+                }
             }
                 // tab.cursor_y = vis.v_y as i32;
             else if vis.v_y > tab.cursor_y as usize {
@@ -185,6 +194,15 @@ pub fn select_mode_line(
                     });
                     tab.redo_stack.clear();
                     tab.input_box.remove(tab.cursor_y as usize);
+                }
+                if tab.input_box.is_empty()
+                {
+                    tab.input_box.push(String::new());
+                    tab.cursor_y = 0;
+                }
+                else
+                {
+                    vis.v_y = tab.cursor_y as usize;
                 }
             }
             return Ok(false);
