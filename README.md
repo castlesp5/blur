@@ -1,57 +1,30 @@
-# Blur — V0.9
+# blur 0.10
 
-A fast, modal, terminal-based text editor written in Rust — built on [`ratatui`](https://github.com/ratatui-org/ratatui) and [`crossterm`](https://github.com/crossterm-rs/crossterm), with Vim-inspired keybindings, syntax highlighting via `syntect`, and theming powered by `opaline`.
-
-> **Status:** early / actively developed. Keybindings and internals are still evolving.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Build from source](#build-from-source)
-- [Usage](#usage)
-- [Modes](#modes)
-  - [Normal Mode](#normal-mode)
-  - [Insert Mode](#insert-mode)
-  - [Select Mode (char-wise)](#select-mode-char-wise)
-  - [Select-Line Mode](#select-line-mode)
-  - [Save / Open Prompts](#save--open-prompts)
-  - [Unsaved Work Prompt](#unsaved-work-prompt)
-- [Tabs](#tabs)
-- [Undo / Redo](#undo--redo)
-- [Syntax Highlighting & Theming](#syntax-highlighting--theming)
-- [Project Structure](#project-structure)
-- [Architecture Notes](#architecture-notes)
-- [Known Limitations](#known-limitations)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
-
----
+A fast, modal terminal text editor written in Rust. Vim-inspired keybindings, automatic syntax highlighting, and a transparent Catppuccin Mocha interface built on [ratatui](https://github.com/ratatui-org/ratatui) and [crossterm](https://github.com/crossterm-rs/crossterm).
 
 ## Features
 
-- **Modal editing** — Normal, Insert, Select (character-wise), and Select-Line modes, in the spirit of Vim.
-- **Multiple tabs** — open and switch between several files/buffers in one session.
-- **Syntax highlighting** — powered by `syntect`, themed through `opaline` (defaults to `catppuccin-mocha`).
-- **Undo / redo** — a dedicated edit-record stack tracks fine-grained operations (character inserts/deletes, line splits/merges, indentation, line moves, etc.) for reliable, reversible edits.
-- **Bracketed paste support** — multi-line pastes are inserted correctly in Insert mode.
-- **Prompt-driven save/open** — save to a new path or open another file without leaving the editor.
-- **Indentation controls** — indent/unindent single lines or whole selections.
-- **Unsaved-work protection** — warns before quitting a tab (or the app) with unsaved changes.
-- **Powerline-style status bar** — shows current mode, file name, save state, tab index, and cursor position.
+- Modal editing: Normal, Insert, Select, and Select-Line modes
+- Multiple tabs with per-tab undo history and viewport
+- Automatic language detection: file path, shebang, and content sniffing via `syntect`
+- Auto-indentation on Enter, with opener-aware extra indent
+- Fine-grained undo/redo across inserts, deletes, splits, merges, indents, and line moves
+- Bracketed paste support in Insert mode and in save/open prompts
+- Prompt-driven save, save-as, and open with retry on failure
+- Unsaved-work confirmation across all open tabs
+- Transparent UI: rounded mode-colored frame, pill tab bar and statusline, Nerd Font icons
+- Theme picker (`t`): all 39 built-in opaline themes with live preview and accent dots
+- IDE-grade indentation: opener-aware indent, electric closers, bracket-split Enter
 
-## Installation
+## Requirements
 
-### Prerequisites
+- Stable Rust toolchain ([install](https://www.rust-lang.org/tools/install))
+- A terminal with UTF-8 and true-color support
+- A Nerd Font for file and mode icons ([nerdfonts.com](https://www.nerdfonts.com))
 
-- [Rust & Cargo](https://www.rust-lang.org/tools/install) (stable toolchain)
-- A terminal emulator with reasonable UTF-8 / true-color support
+## Install
 
-### Build from source
+Build from source:
 
 ```bash
 git clone git@github.com:castlesp5/blur.git
@@ -59,204 +32,196 @@ cd blur
 cargo build --release
 ```
 
-The compiled binary will be available at `target/release/blur`.
+The binary is produced at `target/release/blur`. Run `cargo clippy --all-targets` for lint checks.
 
 ## Usage
 
-Open the editor with no file (a fresh, untitled buffer):
+Open an empty buffer:
 
 ```bash
-$>./blur
+./blur
 ```
 
-Open a specific file:
+Open a file:
 
 ```bash
-$>./blur path/to/file.rs
+./blur path/to/file.rs
 ```
 
-If the file doesn't exist yet, Blur will start with an empty buffer bound to that path — write with `w` to create it.
+If the file does not exist, blur starts with an empty buffer bound to that path. Press `w` to write it.
 
-## Modes
+## Keybindings
 
-Blur is modal: keys behave differently depending on the current mode, shown in the status bar (bottom-left).
+### Normal mode
 
-### Normal Mode
+| Keys | Action |
+| ---- | ------ |
+| `h j k l`, arrows | Move cursor |
+| `g` / `G` | First line / last line |
+| `e` / `b` | Next word / previous word |
+| `E` / `B` | End of line / start of line |
+| `i` / `a` | Insert at cursor / after cursor |
+| `o` | New line below, enter Insert mode |
+| `J` / `K` | Move current line down / up |
+| `>` / `<` | Indent / unindent current line |
+| `d` | Delete current line |
+| `u` / `r` | Undo / redo |
+| `v` / `V` | Select mode / Select-Line mode |
+| `w` | Save (prompts for a path when unnamed) |
+| `W` | Save as (always prompts) |
+| `O` | Open file (prompts) |
+| `N` | New empty tab |
+| `Tab` / `n`, `Shift+Tab` | Next / previous tab |
+| `Delete` / `Backspace` | Delete under / before cursor |
+| `q` | Close tab or quit (confirms when any tab is unsaved) |
+| `t` | Theme picker (live preview, `Enter` applies, `Esc` restores) |
 
-The default mode for navigation and commands.
+### Insert mode
 
-| Key(s)         | Action                                             |
-|----------------|-----------------------------------------------------|
-| `h` `j` `k` `l` / Arrow keys | Move cursor left / down / up / right   |
-| `g`            | Jump to the start of the file                       |
-| `G`            | Jump to the end of the file                         |
-| `e`            | Move to the end of the next word                    |
-| `E`            | Move to the end of the line                         |
-| `b`            | Move to the start of the previous word              |
-| `B`            | Move to the start of the line                        |
-| `i`            | Enter Insert mode at the cursor                      |
-| `a`            | Enter Insert mode, appending after the cursor        |
-| `o`            | Insert a new line below and enter Insert mode        |
-| `J`            | Move current line down                               |
-| `K`            | Move current line up                                 |
-| `>`            | Indent current line                                  |
-| `<`            | Unindent current line                                |
-| `d`            | Delete current line                                  |
-| `u`            | Undo                                                  |
-| `r`            | Redo                                                  |
-| `v`            | Enter Select mode (character-wise)                    |
-| `V`            | Enter Select-Line mode                                |
-| `w`            | Save current file (prompts for a path if the buffer is unnamed) |
-| `W`            | Save as (always prompts for a path)                    |
-| `O`            | Open a file (prompts for a path)                      |
-| `N`            | Open a new, empty tab                                 |
-| `Tab` / `n`    | Switch to the next tab                                |
-| `Shift+Tab`    | Switch to the previous tab                            |
-| `Delete`       | Delete the character under the cursor                 |
-| `Backspace`    | Delete the character before the cursor                |
-| `q`            | Close the current tab / quit (prompts if unsaved)      |
+| Keys | Action |
+| ---- | ------ |
+| Text | Insert at cursor |
+| `Enter` | Split line, carrying indentation (between brackets opens an indented middle line) |
+| `Tab` | Insert 4 spaces |
+| `Shift+Tab` | Remove one indent level |
+| `}` `)` `]` | Electric dedent when typed on blank indentation |
+| `Backspace` | Delete before cursor, or merge with previous line |
+| `Delete` | Delete under cursor, or remove empty line |
+| Arrows | Move without leaving Insert mode |
+| `Esc` | Back to Normal mode |
 
-> **Note:** `w` is overloaded — it saves the file when pressed as a plain command in Normal mode. Use `W` if you always want to be prompted for a new path.
+Typed runs are batched into one undo step.
 
-### Insert Mode
+### Select mode (`v`)
 
-Free text entry, entered via `i`, `a`, or `o` from Normal mode.
+Single-line selection anchored where `v` was pressed.
 
-| Key(s)      | Action                                  |
-|-------------|-------------------------------------------|
-| Any character | Insert at the cursor                    |
-| `Enter`     | Split the line at the cursor               |
-| `Tab`       | Insert 4 spaces                            |
-| `Backspace` | Delete previous character / merge with previous line |
-| `Delete`    | Delete character under cursor / remove empty line |
-| Arrow keys  | Move the cursor without leaving Insert mode |
-| `Esc`       | Return to Normal mode                       |
+| Keys | Action |
+| ---- | ------ |
+| Movement keys | Extend selection |
+| `>` / `<` | Indent / unindent line, back to Normal mode |
+| `d` | Delete selection, back to Normal mode |
+| `Esc` | Cancel |
 
-Consecutive typed characters are batched into a single undo step, so `u` after typing a word undoes the whole word at once rather than one character at a time.
+### Select-Line mode (`V`)
 
-### Select Mode (char-wise)
+Whole-line selection between the anchor and the cursor.
 
-Entered with `v` from Normal mode. Selects a character-wise range on the current line only, anchored where `v` was pressed.
+| Keys | Action |
+| ---- | ------ |
+| `g` / `G` | Extend to first / last line |
+| `J` / `K` | Move selected block down / up |
+| `>` / `<` | Indent / unindent selected lines |
+| `d` | Delete selected lines, back to Normal mode |
+| `Esc` | Cancel |
 
-| Key(s)     | Action                              |
-|------------|----------------------------------------|
-| Movement keys | Extend/move the selection endpoint  |
-| `d`        | Delete the selected text, return to Normal mode |
-| `Esc`      | Cancel and return to Normal mode        |
+### Save, open, and error prompts
 
-### Select-Line Mode
+| Keys | Action |
+| ---- | ------ |
+| Text | Edit the file path |
+| `Backspace` | Delete last character |
+| `Enter` | Confirm |
+| `Esc` | Cancel |
 
-Entered with `V` from Normal mode. Selects whole lines between the anchor row and the cursor row.
+A failed save or open keeps the buffer and the typed path. Any key returns to the prompt for a retry.
 
-| Key(s) | Action                                             |
-|--------|------------------------------------------------------|
-| `g`    | Jump to the first line (adjusts selection)            |
-| `G`    | Jump to the last line (adjusts selection)             |
-| `J`    | Move the selected block of lines down                 |
-| `K`    | Move the selected block of lines up                   |
-| `>`    | Indent all selected lines                             |
-| `<`    | Unindent all selected lines                           |
-| `d`    | Delete all selected lines, return to Normal mode       |
-| `Esc`  | Cancel and return to Normal mode                        |
+### Unsaved-work prompt
 
-### Save / Open Prompts
+Shown when quitting with unsaved changes in any tab.
 
-Triggered by `W` (save as) or `O` (open) in Normal mode, or automatically by `w` when the buffer has no associated file yet.
-
-| Key(s)      | Action                          |
-|-------------|-----------------------------------|
-| Characters  | Type the target file path          |
-| `Backspace` | Delete the last character          |
-| `Enter`     | Confirm and save/open               |
-| `Esc`       | Cancel and return to Normal mode    |
-
-If a save or open fails (e.g. invalid path or permissions), the status bar reports `Can't save file` / `Can't open file`.
-
-### Unsaved Work Prompt
-
-Shown when closing a tab or quitting with unsaved changes.
-
-| Key   | Action                                   |
-|-------|---------------------------------------------|
-| `y`   | Discard changes and close/quit               |
-| Any other key | Cancel and return to Normal mode      |
+| Keys | Action |
+| ---- | ------ |
+| `y` | Discard and close |
+| Any other key | Cancel |
 
 ## Tabs
 
-Blur supports multiple open buffers ("tabs") in a single session:
+Tabs show file icons, numbers, and dirty dots. Duplicate file names gain parent-path context until unique, long names shorten in the middle, and the bar scrolls with `‹` `›` markers to keep the active tab visible.
 
-- `N` opens a new, empty tab and switches to it.
-- `Tab` / `n` and `Shift+Tab` cycle forward/backward through open tabs (wrapping around at the ends).
-- The status bar shows the active file name (prefixed with `*` if unsaved) and its tab index.
-- Closing the last remaining tab quits the application.
+## Themes
 
-## Undo / Redo
+Press `t` in Normal mode for the theme picker: `j`/`k` or arrows move with live preview, `Enter` keeps the theme, `Esc` restores the previous one. Each row shows three accent dots sampled from the theme. No configuration or network involved.
 
-Every meaningful edit — character insertions/deletions, string insert/removal (e.g. indentation), line splits/merges, line insertions/removals, and whole-line moves — is recorded as an `EditRecord`. `u` pops from the undo stack and applies the inverse operation; `r` pops from the redo stack and re-applies it. Performing a new edit clears the redo stack, matching standard editor semantics.
+## Configuration
 
-## Syntax Highlighting & Theming
+Settings persist in `$XDG_CONFIG_HOME/blur/config.toml` (or `~/.config/blur/config.toml`):
 
-- Highlighting is powered by [`syntect`](https://github.com/trishume/syntect), using its bundled default syntax definitions.
-- Colors come from an [`opaline`](https://crates.io/crates/opaline) theme (`catppuccin-mocha` by default), adapted into a `syntect` theme.
-- Files without a recognized extension/name fall back to plain, unstyled text.
-- Foreground/background contrast for UI chrome (status bar segments) is computed at runtime using relative luminance and WCAG contrast ratios, so status bar text stays readable against any theme's accent colors.
-
-## Project Structure
-
+```toml
+theme = "dracula"
 ```
+
+The file is written whenever a theme is applied and read at startup. Unknown theme names fall back to `catppuccin-mocha`. Only `theme` is stored for now.
+
+## Undo and redo
+
+Every edit is recorded as an `EditRecord` with an exact inverse. `u` applies the inverse, `r` re-applies it. Any new edit clears the redo stack. Undo history is per tab.
+
+## Syntax highlighting
+
+Highlighting uses `syntect` with the `catppuccin-mocha` theme loaded through `opaline`:
+
+1. File path lookup (extension and file name).
+2. Shebang and first-line detection (works for untitled buffers).
+3. Content sniffing for common constructs.
+4. Plain text fallback.
+
+Results are cached per tab and invalidated on every edit, undo, and redo. Statusline contrast is derived at runtime from WCAG relative luminance.
+
+## Project structure
+
+```text
 src/
-├── main.rs           # Entry point, event loop, top-level rendering (status bar, layout, cursor)
-├── controls.rs        # Shared cursor-movement primitives (arrow keys, hjkl)
-├── normal_mode.rs      # Normal-mode command handling
-├── modes.rs            # Insert mode, save/open prompts, unsaved-work prompt, paste handling
-├── select_modes.rs     # Select (char-wise) and Select-Line mode handling
-└── helpers.rs           # Tab, Visual, Highlighter, EditRecord, undo/redo application, logging
+  main.rs          Entry point, event loop, renderer
+  controls.rs      Cursor movement primitives (arrows, hjkl)
+  normal_mode.rs   Normal-mode commands
+  modes.rs         Insert mode, save/open prompts, paste, auto-indent
+  select_modes.rs  Select and Select-Line handling
+  helpers.rs       Tab, Visual, Highlighter, EditRecord, undo/redo
 ```
 
-## Architecture Notes
+## Architecture
 
-- **Event loop:** `main.rs` owns a `Vec<Tab>` plus a `mode: i32` state machine (`0` = Normal, `1` = Insert, `2` = Select, `3` = Select-Line, `10`/`11` = Save/Open prompts, `403` = unsaved-work prompt, `401`/`402` = error states). Each keypress is dispatched to the handler for the current mode.
-- **`Tab`** holds per-buffer state: `input_box` (the lines of text), cursor position, scroll offsets, save state, and independent undo/redo stacks — so undo history and viewport are per-tab.
-- **`Visual`** tracks the anchor point (`v_x`, `v_y`) for Select and Select-Line modes.
-- **`EditRecord`** is an enum of reversible operations; `apply_inverse` and `apply_forward` in `helpers.rs` are the single source of truth for how each operation is undone/redone, keeping edit logic and undo logic in sync.
-- **Rendering:** `renderer()` in `main.rs` lays out the buffer viewport and a two-segment status bar, auto-scrolls to keep the cursor in view (accounting for Unicode display width), and positions the terminal cursor precisely — including inside the save/open command line.
+- `main.rs` owns the tab list, the active index, and a numeric mode state machine. Each key event is dispatched to the handler for the current mode.
+- `Tab` holds buffer lines, cursor, scroll offsets, saved flag, highlight cache, and independent undo/redo stacks.
+- `Visual` holds the selection anchor for Select modes.
+- `apply_inverse` and `apply_forward` in `helpers.rs` are the single implementation of every reversible operation.
+- `renderer()` draws the tab bar, the framed viewport with gutter and scrollbar, and the statusline, then places the terminal cursor exactly, including inside prompts.
 
-## Known Limitations
+## Known limitations
 
-- Select mode (`v`) only supports selections within a single line.
-- Word-motion commands (`e`, `b`) are basic space-delimited jumps rather than full Vim word-object semantics.
-- No search/replace, no line numbers, no split panes yet.
-- Debug logging (`helpers::log`) writes to `blur-log.txt` in the working directory — remember to clean this up or gate it behind a debug flag before distributing builds.
+- Select mode (`v`) is limited to a single line.
+- Word motions are space-delimited and do not implement full Vim word objects.
+- No search/replace or split panes yet.
 
 ## Roadmap
 
 - [ ] Search and search-and-replace
-- [ ] Line numbers / relative line numbers
-- [ ] Multi-line visual selection
-- [ ] Configurable keybindings and theme selection at runtime
-- [ ] Split panes / window management
-- [ ] Config file support (e.g. `~/.config/blur/config.toml`)
+- [ ] Multi-line character-wise selection
+- [ ] Configurable keybindings and theme selection
+- [ ] Split panes
+- [ ] Config file support (for example `~/.config/blur/config.toml`)
 
 ## Contributing
 
-Issues and pull requests are welcome. If you're adding a new command, please:
+Issues and pull requests are welcome.
 
-1. Add the corresponding `EditRecord` variant (and its `apply_forward`/`apply_inverse` handling) if the change should be undoable.
-2. Keep mode-specific logic in its own module (`normal_mode.rs`, `modes.rs`, `select_modes.rs`) rather than in `main.rs`.
-3. Update the keybinding tables in this README.
+1. Add an `EditRecord` variant with `apply_forward`/`apply_inverse` handling for any undoable change.
+2. Keep mode logic in its module rather than in `main.rs`.
+3. Update the keybinding tables above.
+4. Keep `cargo clippy --all-targets` warning-free.
 
-## License  
+## License
 
-This project is dual-licensed under either of:
+Dual-licensed under either of:
 
-    MIT License
-    Apache License, Version 2.0
-
+- MIT License
+- Apache License, Version 2.0
 
 ## Author
-`Ismael Boujdad` [www.github.com/castlesp5]  
-  
+
+Ismael Boujdad ([github.com/castlesp5](https://github.com/castlesp5))
+
 ### Credits
-`Artem Tsitronov` [https://github.com/artemtsitronov]
 
-
+Artem Tsitronov ([github.com/artemtsitronov](https://github.com/artemtsitronov))
