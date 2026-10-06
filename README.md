@@ -75,6 +75,7 @@ If the file does not exist, blur starts with an empty buffer bound to that path.
 | `Delete` / `Backspace` | Delete under / before cursor |
 | `q` | Close tab or quit (confirms when any tab is unsaved) |
 | `t` | Theme picker (live preview, `Enter` applies, `Esc` restores) |
+| `P` | Toggle readme preview pane (markdown files) |
 
 ### Insert mode
 
@@ -152,6 +153,12 @@ theme = "dracula"
 ```
 
 The file is written whenever a theme is applied and read at startup. Unknown theme names fall back to `catppuccin-mocha`. Only `theme` is stored for now.
+
+## Preview pane
+
+Press `P` in Normal mode while editing markdown to open a live side-by-side preview. It re-renders on every edit and scrolls in sync with the editor. Headings, lists, quotes, code fences, links, and inline marks render in theme colors.
+
+Images (`![alt](path)`) display inline over the kitty graphics protocol on kitty, WezTerm, and ghostty, including nested tmux sessions. Other terminals show a clean text placeholder, as do missing files. Press `P` again to close.
 
 ## Undo and redo
 

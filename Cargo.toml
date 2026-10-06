@@ -4,7 +4,9 @@ version = "0.10.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.23.1"
 crossterm = "0.29.0"
+image = "0.25.10"
 opaline = { version = "0.4.2", features = ["syntect"] }
 ratatui = "0.30.2"
 syntect = "5.3.0"

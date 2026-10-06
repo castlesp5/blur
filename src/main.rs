@@ -2,6 +2,7 @@ mod controls;
 mod helpers;
 mod modes;
 mod normal_mode;
+mod preview;
 mod select_modes;
 
 use helpers::{Highlighter, Tab, Visual, fg_color};
@@ -133,6 +134,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut mode = 0;
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
+    let mut pv = preview::PreviewState::new();
+    let mut fout = preview::FrameOut::default();
     tabs.push(Tab::new());
     match args.len() {
         1 => {}
@@ -162,10 +165,14 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 &vis,
                 &menu,
                 &theme_name,
+                &mut pv,
+                &mut fout,
                 mode,
                 &the_command_line,
             )
         })?;
+        // kitty images draw above cells, so placements flush after draw
+        preview::flush_media(&mut pv, &fout.placements, fout.cursor);
         let tab = &mut tabs[tab_selector];
 
         let event = crossterm::event::read()?;
@@ -176,11 +183,21 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 10 | 11 => the_command_line.push_str(text),
                 _ => {}
             },
+            // placements are absolute cells, drop them on resize
+            crossterm::event::Event::Resize(_, _) => {
+                preview::clear_media(&mut pv);
+            }
             crossterm::event::Event::Key(event_key) => {
                 match mode {
                     0 => {
-                        // theme picker, kept here so normal_mode stays edit-only
-                        if event_key.code == crossterm::event::KeyCode::Char('t') {
+                        // preview pane and theme picker live here so
+                        // normal_mode stays edit-only
+                        if event_key.code == crossterm::event::KeyCode::Char('P') {
+                            pv.open = !pv.open;
+                            if !pv.open {
+                                preview::clear_media(&mut pv);
+                            }
+                        } else if event_key.code == crossterm::event::KeyCode::Char('t') {
                             menu.sel = menu
                                 .names
                                 .iter()
@@ -323,6 +340,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             _ => {}
         }
     }
+    preview::clear_media(&mut pv);
     crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableBracketedPaste,
@@ -516,7 +534,7 @@ fn shorten_middle(name: &str, max: usize) -> String {
 
 fn hint_for(mode: i32) -> &'static str {
     match mode {
-        0 => "i insert · v visual · t themes · w save · q quit",
+        0 => "i insert · v visual · t themes · P preview · q quit",
         1 => "esc normal",
         2 | 3 => "d delete · esc cancel",
         10 | 11 => "enter ok · esc cancel",
@@ -537,6 +555,8 @@ fn renderer(
     vis: &Visual,
     menu: &ThemeMenu,
     theme_name: &str,
+    pv: &mut preview::PreviewState,
+    fout: &mut preview::FrameOut,
     mode: i32,
     the_command_line: &str,
 ) {
@@ -557,9 +577,22 @@ fn renderer(
     ])
     .split(frame.area());
     let (tab_area, edit_area, status_area) = (areas[0], areas[1], areas[2]);
+    fout.placements.clear();
+
+    // side preview for markdown when the screen is wide enough
+    let lower = tab.file_name.to_lowercase();
+    let is_md = lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".mdown");
+    let split = pv.open && is_md && edit_area.width >= 70;
+    let (code_outer, prev_outer) = if split {
+        let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(edit_area);
+        (cols[0], Some(cols[1]))
+    } else {
+        (edit_area, None)
+    };
 
     // scroll, cursor rests near top third (inside rounded box)
-    let edit_h = edit_area.height.saturating_sub(2);
+    let edit_h = code_outer.height.saturating_sub(2);
     let margin = (edit_h / 3).max(1);
     if (tab.cursor_y as u16) < tab.scroll_y + margin {
         tab.scroll_y = (tab.cursor_y as u16).saturating_sub(margin);
@@ -579,7 +612,7 @@ fn renderer(
     let digits = total.to_string().len().max(2) as u16;
     // gutter renders as `{num:>digits} `, exactly digits + 1 cells
     let gutter_w = digits + 1;
-    let text_w = edit_area.width.saturating_sub(gutter_w + 4);
+    let text_w = code_outer.width.saturating_sub(gutter_w + 4);
     if visual_x <= tab.scroll_x {
         tab.scroll_x = visual_x;
     } else if visual_x >= tab.scroll_x + text_w {
@@ -795,8 +828,8 @@ fn renderer(
             ])
         })
         .title_alignment(Alignment::Right);
-    let inner = block.inner(edit_area);
-    frame.render_widget(block, edit_area);
+    let inner = block.inner(code_outer);
+    frame.render_widget(block, code_outer);
 
     let code_w = inner.width.saturating_sub(1);
     if total > 1 && total as u16 > inner.height && code_w > 0 && inner.height > 0 {
@@ -823,6 +856,110 @@ fn renderer(
             .scroll((0, tab.scroll_x)),
         Rect::new(inner.x, inner.y, code_w, inner.height),
     );
+
+    // right: live readme preview in its own rounded box. markdown parses
+    // every frame so edits show instantly, images draw via kitty gfx.
+    if let Some(prev_area) = prev_outer {
+        let mdc = preview::MdColors {
+            text: textc,
+            dim,
+            faint,
+            accent: lav,
+            code: hue(theme, "green").into(),
+            quote: dim,
+        };
+        let doc = preview::parse_markdown(&tab.input_box, &mdc);
+        let dir = tab
+            .file_name
+            .rsplit_once('/')
+            .map(|(d, _)| d.to_string())
+            .unwrap_or_else(|| ".".to_string());
+        let media_total = doc
+            .iter()
+            .filter(|r| matches!(r, preview::DocRow::Media { .. }))
+            .count();
+        let pblock = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(frame_col))
+            .style(Style::default().bg(base))
+            .title_top(Line::from(vec![
+                Span::styled(" ", Style::default().bg(base)),
+                Span::styled("", Style::default().fg(focus).bg(base)),
+                Span::styled(
+                    if media_total > 0 {
+                        format!(" preview · {} img ", media_total)
+                    } else {
+                        " preview ".to_string()
+                    },
+                    Style::default()
+                        .fg(fg_color(hue(theme, mode_key)))
+                        .bg(focus)
+                        .bold(),
+                ),
+                Span::styled("", Style::default().fg(focus).bg(base)),
+            ]))
+            .title_alignment(Alignment::Right);
+        let pinner = pblock.inner(prev_area);
+        frame.render_widget(pblock, prev_area);
+
+        let cols = pinner.width;
+        let mut plines: Vec<Line> = Vec::new();
+        let mut medias: Vec<(u32, usize)> = Vec::new();
+        for row in doc {
+            match row {
+                preview::DocRow::Text(l) => plines.push(l),
+                preview::DocRow::Media { alt, path } => {
+                    let full = format!("{dir}/{path}");
+                    let missing = !std::path::Path::new(&full).exists();
+                    let placed =
+                        !missing && preview::kitty_supported() && cols > 4 && pinner.height > 0;
+                    if placed && let Some((id, rows)) = preview::ensure_media(pv, &full, cols) {
+                        medias.push((id, plines.len()));
+                        for _ in 0..rows {
+                            plines.push(Line::from(""));
+                        }
+                        continue;
+                    }
+                    // text fallback on plain terminals, missing files, errors
+                    plines.push(Line::from(vec![
+                        Span::styled("[img ", Style::default().fg(dim).bg(base)),
+                        Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
+                        Span::styled(
+                            if missing {
+                                format!(" missing: {}]", path)
+                            } else {
+                                format!("]({})", path)
+                            },
+                            Style::default().fg(dim).bg(base),
+                        ),
+                    ]));
+                }
+            }
+        }
+        // proportional scroll follows the editor
+        let view_h = pinner.height as usize;
+        let denom = total.saturating_sub(inner.height as usize).max(1);
+        let frac = (tab.scroll_y as usize).min(denom) as f64 / denom as f64;
+        let start = (frac * plines.len().saturating_sub(view_h) as f64) as usize;
+        let end = start.saturating_add(view_h);
+        let slice: Vec<Line> = plines.into_iter().skip(start).take(view_h).collect();
+        frame.render_widget(Paragraph::new(Text::from(slice)).bg(base), pinner);
+        // kitty draws above cells, so no placements under modals
+        let modal = matches!(mode, 401 | 402 | 403 | 12);
+        if !modal {
+            for (id, row) in medias {
+                if row >= start && row < end {
+                    fout.placements.push(preview::Placement {
+                        id,
+                        x: pinner.x,
+                        y: pinner.y + (row - start) as u16,
+                        cols,
+                    });
+                }
+            }
+        }
+    }
 
     // bottom: mode pill, live context, position, brand. each fact once.
     let msg: String = match mode {
@@ -1042,11 +1179,12 @@ fn renderer(
         }
     }
 
-    // cursor inside the rounded box
-    frame.set_cursor_position((
+    // cursor inside the rounded box, mirrored for post-draw media flush
+    fout.cursor = (
         inner.x + gutter_w + visual_x.saturating_sub(tab.scroll_x),
         inner.y + (tab.cursor_y as u16).saturating_sub(tab.scroll_y),
-    ));
+    );
+    frame.set_cursor_position(fout.cursor);
     if mode == 10 || mode == 11 {
         let prefix = if mode == 10 { "save: " } else { "open: " };
         // cells before typed text:  + pill +  + space + file glyph
@@ -1058,6 +1196,7 @@ fn renderer(
             + UnicodeWidthStr::width(fgly) as u16
             + UnicodeWidthStr::width(prefix) as u16
             + UnicodeWidthStr::width(the_command_line) as u16;
-        frame.set_cursor_position((x, status_area.y));
+        fout.cursor = (x, status_area.y);
+        frame.set_cursor_position(fout.cursor);
     }
 }
