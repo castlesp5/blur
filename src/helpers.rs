@@ -1,24 +1,20 @@
 use syntect::parsing::SyntaxSet;
 
-
-
 pub struct Visual {
-            pub v_x: usize,
-            pub v_y: usize,
-            pub on : bool,
+    pub v_x: usize,
+    pub v_y: usize,
+    pub on: bool,
 }
 
 impl Visual {
     pub fn new() -> Self {
-        Visual { v_x: 0, v_y: 0, on: false}
+        Visual {
+            v_x: 0,
+            v_y: 0,
+            on: false,
+        }
     }
-
 }
-
-
-
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn wcag_contrast(l1: f64, l2: f64) -> f64 {
     let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
@@ -61,29 +57,84 @@ impl Highlighter {
         }
     }
 
-    pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
-        if let Some(cached) = &tab.highlight_cache
+    /// cheap theme swap for live picker preview: syntaxes stay loaded,
+    /// only the syntect theme rebuilds. callers must clear tab caches.
+    pub fn set_theme(&mut self, theme: &opaline::Theme) {
+        self.syntect_theme = opaline::adapters::syntect::to_syntect_theme(theme);
+    }
+
+    /// auto detect language: file path first, then shebang / first line,
+    /// then content sniff, plain text last. works for untitled buffers too.
+    fn detect_syntax(&self, tab: &Tab) -> &syntect::parsing::SyntaxReference {
+        if !tab.file_name.is_empty()
+            && let Ok(Some(s)) = self.syntax_set.find_syntax_for_file(&tab.file_name)
         {
-            return cached.clone();
+            return s;
         }
+        let first = tab.input_box.first().map(String::as_str).unwrap_or("");
+        if !first.is_empty() {
+            if let Some(s) = self.syntax_set.find_syntax_by_first_line(first) {
+                return s;
+            }
+            // shebang without syntect first-line match, map common interpreters
+            let low = first.to_lowercase();
+            let ext = if low.contains("python") {
+                Some("py")
+            } else if low.contains("node") || low.contains("deno") || low.contains("bun") {
+                Some("js")
+            } else if low.contains("bash") || low.contains("sh") {
+                Some("sh")
+            } else if low.contains("ruby") {
+                Some("rb")
+            } else if low.contains("perl") {
+                Some("pl")
+            } else if low.contains("lua") {
+                Some("lua")
+            } else {
+                None
+            };
+            if let Some(e) = ext
+                && let Some(s) = self.syntax_set.find_syntax_by_extension(e)
+            {
+                return s;
+            }
+        }
+        // content sniff for untitled buffers: braces + semicolons smell like c,
+        // def/end like ruby, fn/let like rust
         if tab.file_name.is_empty() {
-            return tab
+            let sample: String = tab
                 .input_box
                 .iter()
-                .map(|line| {
-                    ratatui::text::Line::from(ratatui::text::Span::styled(
-                        line.to_string(),
-                        ratatui::style::Style::default().fg(ratatui::style::Color::White),
-                    ))
-                })
-                .collect();
+                .take(20)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let low = sample.to_lowercase();
+            for (needle, ext) in [
+                ("fn ", "rs"),
+                ("let mut", "rs"),
+                ("import ", "py"),
+                ("def ", "py"),
+                ("console.log", "js"),
+                ("package main", "go"),
+                ("#include", "c"),
+                ("public static void", "java"),
+            ] {
+                if low.contains(needle)
+                    && let Some(s) = self.syntax_set.find_syntax_by_extension(ext)
+                {
+                    return s;
+                }
+            }
         }
-        let syntax = self
-            .syntax_set
-            .find_syntax_for_file(&tab.file_name)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+        self.syntax_set.find_syntax_plain_text()
+    }
+
+    pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
+        if let Some(cached) = &tab.highlight_cache {
+            return cached.clone();
+        }
+        let syntax = self.detect_syntax(tab);
 
         let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
         let mut spans: Vec<ratatui::text::Line> = Vec::new();
@@ -105,11 +156,9 @@ impl Highlighter {
             spans.push(ratatui::text::Line::from(spans_for_line));
         }
         tab.highlight_cache = Some(spans.clone());
-        return spans;
+        spans
     }
 }
-
-///////////////////////////////////////////////////////////////////////////////////
 
 pub struct Tab {
     pub file_name: String,
@@ -140,8 +189,7 @@ impl Tab {
         }
     }
 
-    pub fn unsave(&mut self)
-    {
+    pub fn unsave(&mut self) {
         self.saved = false;
         self.highlight_cache = None;
     }
@@ -160,12 +208,21 @@ pub enum EditRecord {
     },
     RemoveString {
         row: usize,
-        col : usize,
+        col: usize,
         text: String,
     },
     SplitLine {
         row: usize,
         col: usize,
+    },
+    /// enter between `{` and `}` (or `[]`, `()`): one keypress makes
+    /// three lines. single undo unit via stored tail.
+    BraceSplit {
+        row: usize,
+        col: usize,
+        indent: String,
+        base: String,
+        tail: String,
     },
     MergeLine {
         row: usize,
@@ -176,7 +233,7 @@ pub enum EditRecord {
     },
     RemoveLine {
         row: usize,
-        content: String 
+        content: String,
     },
     RemoveEmptyLine {
         row: usize,
@@ -207,6 +264,13 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
             (*row, *col)
         }
 
+        EditRecord::BraceSplit { row, col, tail, .. } => {
+            input_box.remove(*row + 2);
+            input_box.remove(*row + 1);
+            input_box[*row].push_str(tail);
+            (*row, *col)
+        }
+
         EditRecord::MergeLine { row, prev_len } => {
             let combined = input_box[*row - 1].split_off(*prev_len);
             input_box.insert(*row, combined);
@@ -217,7 +281,7 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
             input_box.remove(*row);
             (*row, 0)
         }
-        
+
         EditRecord::RemoveLine { row, content } => {
             input_box.insert(*row, content.clone());
             (*row, 0)
@@ -253,6 +317,21 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
             (*row + 1, 0)
         }
 
+        EditRecord::BraceSplit {
+            row,
+            col,
+            indent,
+            base,
+            tail,
+        } => {
+            let head_len = input_box[*row].len().saturating_sub(tail.len());
+            let col = (*col).min(head_len);
+            input_box[*row].truncate(col);
+            input_box.insert(*row + 1, indent.clone());
+            input_box.insert(*row + 2, format!("{base}{tail}"));
+            (*row + 1, indent.len())
+        }
+
         EditRecord::MergeLine { row, prev_len } => {
             let combined = input_box.remove(*row + 1);
             input_box[*row].push_str(&combined);
@@ -275,6 +354,9 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
     }
 }
 
+/// debug logger for a fullscreen app where stdout is unusable.
+/// writes to blur-log.txt in the working directory.
+#[allow(dead_code)]
 pub fn log(msg: &str) {
     use std::io::Write;
     if let Ok(mut file) = std::fs::OpenOptions::new()
