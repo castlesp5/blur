@@ -99,7 +99,9 @@ Written when a theme is applied, read at startup.
 
 ## Markdown preview
 
-Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type. Images display on kitty, WezTerm, and ghostty through the kitty graphics protocol; other terminals show text placeholders.
+Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type.
+
+Images display through the kitty graphics protocol on kitty, WezTerm, and ghostty. Under tmux and screen they are disabled by default, because those multiplexers print passthrough sequences as plain text unless passthrough is enabled. Set `BLUR_KITTY=1` to force images on if your multiplexer is configured for it. Everywhere else, images render as text placeholders.
 
 ## Undo
 

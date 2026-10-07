@@ -162,17 +162,27 @@ fn rows_for(dims: Option<(u32, u32)>, cols: u16) -> u16 {
 /// terminals speaking the kitty graphics protocol: kitty itself,
 /// wezterm, and ghostty. everything else gets text placeholders.
 pub fn kitty_supported() -> bool {
-    let known_outer = std::env::var_os("KITTY_WINDOW_ID").is_some()
+    // opt in explicitly, mainly for multiplexer users who have
+    // passthrough enabled and want images
+    if std::env::var("BLUR_KITTY")
+        .unwrap_or_default()
+        .eq_ignore_ascii_case("1")
+    {
+        return true;
+    }
+    let in_multiplexer = std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some();
+    // under tmux or screen the protocol only works with passthrough on.
+    // without it the terminal prints the wrapped escape as plain text,
+    // so stay on placeholders rather than corrupting the screen.
+    if in_multiplexer {
+        return false;
+    }
+    std::env::var_os("KITTY_WINDOW_ID").is_some()
         || std::env::var("TERM").unwrap_or_default().contains("kitty")
         || matches!(
             std::env::var("TERM_PROGRAM").as_deref(),
             Ok("WezTerm") | Ok("ghostty")
-        );
-    // inside tmux or screen the env vars still describe the outer
-    // terminal. if that one is not known to speak the protocol we stay
-    // on text placeholders, since passthrough would otherwise dump raw
-    // escape text onto the screen.
-    known_outer
+        )
 }
 
 /// wrap escape sequences for tmux passthrough when nested inside tmux.
