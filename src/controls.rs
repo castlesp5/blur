@@ -21,6 +21,12 @@ pub fn default_controls(
                 *cursor_x += ch.len_utf8() as i32;
             }
         }
+        crossterm::event::KeyCode::Home => {
+            *cursor_x = 0;
+        }
+        crossterm::event::KeyCode::End => {
+            *cursor_x = text[*cursor_y as usize].len() as i32;
+        }
         crossterm::event::KeyCode::Up => {
             if y > 0 {
                 if x > text[y - 1].len() {

@@ -55,9 +55,10 @@ fn load_theme_robust(name: &str) -> Option<opaline::Theme> {
     }
     for item in opaline::list_available_themes() {
         if (item.name.eq_ignore_ascii_case(name) || item.display_name.eq_ignore_ascii_case(name))
-            && let Some(t) = opaline::load_by_name(&item.name) {
-                return Some(t);
-            }
+            && let Some(t) = opaline::load_by_name(&item.name)
+        {
+            return Some(t);
+        }
     }
     None
 }
@@ -150,6 +151,52 @@ fn save_config_theme(name: &str) {
         }
         let _ = std::fs::write(path, format!("theme = \"{}\"\n", name));
     }
+}
+
+/// true when the key was consumed by the page scrolling handler above
+fn scroll_key(code: crossterm::event::KeyCode, ctrl: bool) -> bool {
+    match code {
+        crossterm::event::KeyCode::PageUp | crossterm::event::KeyCode::PageDown => true,
+        crossterm::event::KeyCode::Char(c) => {
+            ctrl && matches!(c, 'd' | 'u' | 'f' | 'b')
+        }
+        _ => false,
+    }
+}
+
+/// scroll the viewport and carry the cursor by the same amount. the
+/// renderer keeps the cursor inside the window, so a view-only scroll
+/// would be undone on the very next frame.
+fn scroll_by(tab: &mut helpers::Tab, delta: i32, view_h: usize) {
+    let lines = tab.input_box.len();
+    if lines == 0 || view_h == 0 {
+        return;
+    }
+    let max_top = lines.saturating_sub(view_h) as i32;
+    let top = (tab.scroll_y as i32 + delta).clamp(0, max_top) as u16;
+    let applied = top as i32 - tab.scroll_y as i32;
+    if applied == 0 {
+        return;
+    }
+    tab.scroll_y = top;
+    let line = (tab.cursor_y + applied).clamp(0, lines as i32 - 1) as usize;
+    tab.cursor_y = line as i32;
+    let len = tab.input_box[line].len() as i32;
+    tab.cursor_x = tab.cursor_x.clamp(0, len);
+}
+
+/// horizontal scroll, used by shift and the wheel. mirrors the vertical
+/// behaviour so the cursor keeps its place inside the window.
+fn scroll_x_by(tab: &mut helpers::Tab, delta: i32, view_w: usize) {
+    let len = tab.input_box.get(tab.cursor_y as usize).map_or(0, |l| l.len()) as i32;
+    if view_w == 0 {
+        return;
+    }
+    let max_top = (len - view_w as i32).max(0);
+    let next = (tab.scroll_x as i32 + delta).clamp(0, max_top);
+    let applied = next - tab.scroll_x as i32;
+    tab.scroll_x = next as u16;
+    tab.cursor_x = (tab.cursor_x + applied).clamp(0, len);
 }
 
 /// shape the terminal cursor to match what the editor is doing: bar while
@@ -414,20 +461,66 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                             }
                             MouseEventKind::ScrollUp => {
                                 if edit_hit || prev_hit {
+                                    let h = layout.edit_inner.height as usize;
                                     let t = &mut tabs[tab_selector];
-                                    t.scroll_y = t.scroll_y.saturating_sub(3);
+                                    if m.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                                        scroll_x_by(t, -4, layout.text_w);
+                                    } else {
+                                        scroll_by(t, -3, h);
+                                    }
                                 }
                             }
-                            MouseEventKind::ScrollDown if (edit_hit || prev_hit) => {
-                                let t = &mut tabs[tab_selector];
-                                t.scroll_y = t.scroll_y.saturating_add(3);
+                            MouseEventKind::ScrollDown => {
+                                if edit_hit || prev_hit {
+                                    let h = layout.edit_inner.height as usize;
+                                    let t = &mut tabs[tab_selector];
+                                    if m.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                                        scroll_x_by(t, 4, layout.text_w);
+                                    } else {
+                                        scroll_by(t, 3, h);
+                                    }
+                                }
                             }
+                            MouseEventKind::ScrollLeft => {
+                                if edit_hit {
+                                    let w = layout.text_w;
+                                    scroll_x_by(&mut tabs[tab_selector], -4, w);
+                                }
+                            }
+                            MouseEventKind::ScrollRight
+                                if edit_hit => {
+                                    let w = layout.text_w;
+                                    scroll_x_by(&mut tabs[tab_selector], 4, w);
+                                }
                             _ => {}
                         }
                     }
                 }
             }
             crossterm::event::Event::Key(event_key) => {
+                // page scrolling, handled before the mode dispatch so
+                // every other key still reaches its own handler
+                if matches!(mode, 0 | 1) && {
+                    let page = (layout.edit_inner.height as i32 / 2).max(1);
+                    let ctrl = event_key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL);
+                    let h = layout.edit_inner.height as usize;
+                    // reuse the active tab borrow taken before the match
+                    let t = &mut *tab;
+                    match event_key.code {
+                        crossterm::event::KeyCode::PageUp => scroll_by(t, -page, h),
+                        crossterm::event::KeyCode::PageDown => scroll_by(t, page, h),
+                        crossterm::event::KeyCode::Char('d') if ctrl => scroll_by(t, page, h),
+                        crossterm::event::KeyCode::Char('u') if ctrl => scroll_by(t, -page, h),
+                        crossterm::event::KeyCode::Char('f') if ctrl => scroll_by(t, page * 2, h),
+                        crossterm::event::KeyCode::Char('b') if ctrl => scroll_by(t, -page * 2, h),
+                        _ => {}
+                    }
+                    scroll_key(event_key.code, ctrl)
+                } {
+                    continue;
+                }
                 match mode {
                     0 => {
                         // preview pane and theme picker live here so
@@ -1144,6 +1237,7 @@ fn renderer(
     frame.render_widget(block, code_outer);
     lay.edit_inner = inner;
     lay.gutter_w = gutter_w;
+    lay.text_w = inner.width.saturating_sub(gutter_w + 1).max(1) as usize;
 
     let code_w = inner.width.saturating_sub(1);
     if total > 1 && total as u16 > inner.height && code_w > 0 && inner.height > 0 {
@@ -1590,4 +1684,64 @@ fn renderer(
         )
     };
     frame.set_cursor_position(cursor);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tab_with(lines: usize) -> helpers::Tab {
+        let mut t = helpers::Tab::new();
+        t.input_box = (0..lines).map(|i| format!("line {i}")).collect();
+        t
+    }
+
+    #[test]
+    fn scroll_carries_the_cursor_so_follow_never_snaps_back() {
+        let mut t = tab_with(100);
+        scroll_by(&mut t, 10, 20);
+        assert_eq!(t.scroll_y, 10);
+        assert_eq!(t.cursor_y, 10);
+        // the cursor stays inside the window, which is what stops the
+        // renderer from undoing the scroll on the next frame
+        assert!(t.cursor_y as u16 >= t.scroll_y);
+        assert!((t.cursor_y as u16) < t.scroll_y + 20);
+    }
+
+    #[test]
+    fn scroll_clamps_at_both_ends() {
+        let mut t = tab_with(100);
+        scroll_by(&mut t, -50, 20);
+        assert_eq!(t.scroll_y, 0);
+        assert_eq!(t.cursor_y, 0);
+        scroll_by(&mut t, 10_000, 20);
+        assert_eq!(t.scroll_y, 80);
+        assert_eq!(t.cursor_y, 80);
+    }
+
+    #[test]
+    fn horizontal_scroll_keeps_cursor_on_screen() {
+        let mut t = tab_with(3);
+        t.input_box[0] = "x".repeat(500);
+        t.cursor_x = 0;
+        scroll_x_by(&mut t, 40, 30);
+        assert_eq!(t.scroll_x, 40);
+        assert_eq!(t.cursor_x, 40, "cursor rides the window sideways");
+        scroll_x_by(&mut t, -10_000, 30);
+        assert_eq!(t.scroll_x, 0);
+        assert_eq!(t.cursor_x, 0);
+        scroll_x_by(&mut t, 10_000, 30);
+        assert_eq!(t.scroll_x, (500 - 30) as u16, "clamped to the line end");
+    }
+
+    #[test]
+    fn scroll_key_detection() {
+        use crossterm::event::KeyCode;
+        assert!(scroll_key(KeyCode::PageDown, false));
+        assert!(scroll_key(KeyCode::PageUp, false));
+        assert!(scroll_key(KeyCode::Char('d'), true));
+        assert!(!scroll_key(KeyCode::Char('d'), false), "plain d deletes");
+        assert!(!scroll_key(KeyCode::Char('u'), false), "plain u undoes");
+        assert!(!scroll_key(KeyCode::Char('x'), true));
+    }
 }

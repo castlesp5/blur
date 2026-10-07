@@ -62,6 +62,8 @@ pub struct UiLayout {
     pub prev_inner: Option<ratatui::layout::Rect>,
     /// gutter cells before code in that area
     pub gutter_w: u16,
+    /// usable code width, excluding gutter and scrollbar
+    pub text_w: usize,
     /// tab bar row
     pub tab_y: u16,
     /// tab pill x-ranges with real tab indices

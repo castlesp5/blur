@@ -288,6 +288,7 @@ pub fn open_mode(
             new_tab.input_box = content.split('\n').map(str::to_string).collect();
             new_tab.file_name = path;
             new_tab.saved = true;
+            new_tab.lang = String::new();
             new_tab.highlight_cache = None;
             tabs.push(new_tab);
             *tab_selector = tabs.len() - 1;
@@ -318,8 +319,12 @@ pub fn save_mode(
         crossterm::event::KeyCode::Enter => {
             match std::fs::write(&the_command_line, tab.input_box.join("\n")) {
                 Ok(_) => {
+                    // the name drives language detection, so the cached
+                    // spans from before the save are now wrong
                     tab.file_name = the_command_line.clone();
                     tab.saved = true;
+                    tab.lang = String::new();
+                    tab.highlight_cache = None;
                     the_command_line.clear();
                     *mode = 0;
                 }

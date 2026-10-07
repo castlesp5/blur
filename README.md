@@ -72,6 +72,19 @@ cargo build --release
 | `Backspace` | Delete before cursor, or merge lines |
 | `Esc` | Back to normal mode |
 
+### Scrolling
+
+| Keys | Action |
+| ---- | ------ |
+| Wheel / trackpad | Scroll, the cursor rides along |
+| `Shift` + wheel | Scroll sideways |
+| `PageDown` / `PageUp` | Half page |
+| `Ctrl+D` / `Ctrl+U` | Half page |
+| `Ctrl+F` / `Ctrl+B` | Full page |
+| `Home` / `End` | Start / end of line |
+
+Scrolling moves the window and the cursor together, so the view never snaps back to the cursor.
+
 ### Other
 
 | Keys | Action |
@@ -86,7 +99,7 @@ cargo build --release
 - Click a tab to switch, click its `×` or middle-click it to close
 - Click a theme row to apply
 - Click the left half of the confirm dialog to quit
-- Scroll to scroll either pane
+- Wheel or trackpad scroll, with the cursor riding along
 
 ## Configuration
 
