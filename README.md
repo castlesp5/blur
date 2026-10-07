@@ -122,7 +122,7 @@ Images display through the kitty graphics protocol on kitty, WezTerm, and ghostt
 
 ## Syntax highlighting
 
-Highlighting uses `syntect` with the `catppuccin-mocha` theme. Detection runs in layers, so it works for named files, unsaved buffers, and scripts with no extension:
+Highlighting uses `syntect` with the `catppuccin-mocha` theme. Lines are fed to the parser with their terminator, so comment and string scopes close correctly at the end of a line. Detection runs in layers, so it works for named files, unsaved buffers, and scripts with no extension:
 
 1. Whole file names: `Makefile`, `Dockerfile`, `Rakefile`, `Cargo.toml`, `.bashrc`, `CMakeLists.txt`, and similar.
 2. Path and extension, including compound suffixes such as `.blade.php` and `.d.ts`.

@@ -1495,18 +1495,29 @@ impl Highlighter {
         let mut spans: Vec<ratatui::text::Line> = Vec::new();
 
         for line in &tab.input_box {
+            // the newline grammar set matches on the line terminator, so
+            // it has to be fed in. without it a comment or string scope
+            // never closes and swallows every following line.
+            let mut owned = String::with_capacity(line.len() + 1);
+            owned.push_str(line);
+            if !line.ends_with('\n') {
+                owned.push('\n');
+            }
             let range = the_highlighter
-                .highlight_line(line, &self.syntax_set)
+                .highlight_line(&owned, &self.syntax_set)
                 .unwrap_or_default();
             let mut spans_for_line: Vec<ratatui::text::Span> = Vec::new();
             for (style, text) in range {
                 let fg = style.foreground;
-                let span = ratatui::text::Span::styled(
-                    text.trim_end_matches('\n').to_string(),
+                let text = text.trim_end_matches('\n');
+                if text.is_empty() {
+                    continue;
+                }
+                spans_for_line.push(ratatui::text::Span::styled(
+                    text.to_string(),
                     ratatui::style::Style::default()
                         .fg(ratatui::style::Color::Rgb(fg.r, fg.g, fg.b)),
-                );
-                spans_for_line.push(span);
+                ));
             }
             spans.push(ratatui::text::Line::from(spans_for_line));
         }
@@ -1856,6 +1867,35 @@ mod tests {
             "toml"
         );
         assert_eq!(lang_for_body("fun main() {\n  val x = 1\n}"), "kotlin");
+    }
+
+    #[test]
+    fn comment_does_not_swallow_the_rest_of_the_file() {
+        // the newline grammar set matches on the line terminator. feeding
+        // lines without it left comment scopes open forever and painted
+        // every following line with the comment color.
+        let h = hl();
+        let mut tab = Tab::new();
+        tab.file_name = "x.py".into();
+        tab.input_box = vec![
+            "#!/usr/bin/env python3".into(),
+            String::new(),
+            "import asyncio".into(),
+            "x = 42  # note".into(),
+            "def greet(name):".into(),
+            "    return name".into(),
+        ];
+        let lines = h.highlight(&mut tab);
+        let color_of = |li: usize, ci: usize| -> (u8, u8, u8) {
+            match lines[li].spans[ci].style.fg {
+                Some(ratatui::style::Color::Rgb(r, g, b)) => (r, g, b),
+                _ => (0, 0, 0),
+            }
+        };
+        // the import line and the keyword after it must not share the
+        // comment color of line 0
+        assert_ne!(color_of(2, 0), color_of(0, 0), "import line took comment color");
+        assert_ne!(color_of(4, 0), color_of(0, 0), "def took comment color");
     }
 
     #[test]
