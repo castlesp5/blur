@@ -67,6 +67,55 @@ pub struct FrameOut {
     pub placements: Vec<Placement>,
 }
 
+/// clickable layout snapshot from the last frame. mouse events map
+/// cells back through these rects, so every control is clickable.
+#[derive(Default)]
+pub struct UiLayout {
+    /// editor code area inside its box
+    pub edit_inner: ratatui::layout::Rect,
+    /// preview code area inside its box, when split
+    pub prev_inner: Option<ratatui::layout::Rect>,
+    /// gutter cells before code in that area
+    pub gutter_w: u16,
+    /// tab bar row
+    pub tab_y: u16,
+    /// tab pill x-ranges with real tab indices
+    pub tab_pills: Vec<(u16, u16, usize)>,
+    /// theme picker popup: area, first row, row count
+    pub picker: Option<(ratatui::layout::Rect, usize, usize)>,
+    /// confirm modal area, left half confirms
+    pub modal: Option<ratatui::layout::Rect>,
+}
+
+/// convert a click cell into buffer coordinates, char-boundary safe.
+#[allow(clippy::too_many_arguments)]
+pub fn cell_to_buffer(
+    lines: &[String],
+    inner_x: u16,
+    gutter_w: u16,
+    scroll_x: u16,
+    scroll_y: u16,
+    cx: u16,
+    cy: u16,
+    inner_y: u16,
+) -> (i32, i32) {
+    let row = (cy.saturating_sub(inner_y) as usize + scroll_y as usize)
+        .min(lines.len().saturating_sub(1));
+    let want = cx.saturating_sub(inner_x).saturating_sub(gutter_w) as usize + scroll_x as usize;
+    let line = &lines[row];
+    let mut width = 0usize;
+    let mut byte = 0usize;
+    for (idx, ch) in line.char_indices() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width + w > want {
+            break;
+        }
+        width += w;
+        byte = idx + ch.len_utf8();
+    }
+    (row as i32, byte as i32)
+}
+
 pub enum DocRow {
     Text(Line<'static>),
     /// image reference, row reservation computed at layout time
@@ -137,6 +186,12 @@ pub fn kitty_supported() -> bool {
     if std::env::var("TERM").unwrap_or_default().contains("kitty") {
         return true;
     }
+    // inside tmux or screen the outer terminal may still speak kitty
+    // graphics. unknown APC sequences are ignored elsewhere, and a
+    // text placeholder sits behind every image, so attempting is safe.
+    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
+        return true;
+    }
     matches!(
         std::env::var("TERM_PROGRAM").as_deref(),
         Ok("WezTerm") | Ok("ghostty")
@@ -157,19 +212,17 @@ fn emit(out: &mut impl Write, s: &str) {
 }
 
 /// transmit cached png bytes, chunked base64, replies silenced with q=2.
+/// a lone chunk terminates with m=0, otherwise the terminal waits forever.
 pub fn kitty_transmit(out: &mut impl Write, id: u32, png: &[u8]) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+    if png.is_empty() {
+        return;
+    }
     let b64 = STANDARD.encode(png);
     let bytes = b64.as_bytes();
-    let mut first = true;
-    for chunk in bytes.chunks(4096) {
-        let more = if chunk.as_ptr_range().end == bytes.as_ptr_range().end {
-            0
-        } else {
-            1
-        };
-        let _ = first;
-        first = false;
+    let total = bytes.chunks(4096).len().max(1);
+    for (n, chunk) in bytes.chunks(4096).enumerate() {
+        let more = usize::from(n + 1 < total);
         emit(
             out,
             &format!(
@@ -257,7 +310,7 @@ fn push_plain(spans: &mut Vec<Span<'static>>, buf: &mut String, c: &MdColors) {
     }
 }
 
-fn inline(text: &str, c: &MdColors) -> Vec<Span<'static>> {
+pub fn inline(text: &str, c: &MdColors) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut buf = String::new();
     macro_rules! plain {
@@ -383,31 +436,63 @@ fn inline(text: &str, c: &MdColors) -> Vec<Span<'static>> {
 }
 
 /// split a line into an image ref when it is exactly `![alt](src)`.
-fn line_image(line: &str) -> Option<(String, String)> {
-    let t = line.trim();
-    if !t.starts_with("![") {
-        return None;
-    }
-    let mid = t.find("](")?;
-    let end = t.rfind(')')?;
-    if mid + 2 > end {
-        return None;
-    }
-    let alt = t[2..mid].to_string();
-    let mut src = t[mid + 2..end].to_string();
-    // drop optional "title"
-    if let Some(sp) = src.find(" \"") {
-        src.truncate(sp);
-    }
-    src = src.trim().trim_matches(&['<', '>'][..]).to_string();
-    if src.is_empty()
+/// remote or inline sources never resolve to local media.
+fn remote_src(src: &str) -> bool {
+    src.is_empty()
         || src.starts_with("http://")
         || src.starts_with("https://")
         || src.starts_with("data:")
-    {
-        return None;
+}
+
+/// pull a quoted html attribute value out of a tag.
+fn html_attr(tag: &str, name: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let key = format!("{}={}", name, quote);
+        if let Some(at) = tag.find(&key) {
+            let rest = &tag[at + key.len()..];
+            if let Some(end) = rest.find(quote) {
+                return Some(rest[..end].to_string());
+            }
+        }
     }
-    Some((alt, src))
+    None
+}
+
+/// image ref for a `![alt](src)` line or an `<img src="...">` tag.
+/// alt falls back to the file name.
+fn line_image(line: &str) -> Option<(String, String)> {
+    let t = line.trim();
+    if t.starts_with("![") {
+        let mid = t.find("](")?;
+        let end = t.rfind(')')?;
+        if mid + 2 > end {
+            return None;
+        }
+        let alt = t[2..mid].to_string();
+        let mut src = t[mid + 2..end].to_string();
+        // drop optional "title"
+        if let Some(sp) = src.find(" \"") {
+            src.truncate(sp);
+        }
+        src = src.trim().trim_matches(&['<', '>'][..]).to_string();
+        if remote_src(&src) {
+            return None;
+        }
+        return Some((alt, src));
+    }
+    if let Some(at) = t.find("<img") {
+        let tag = &t[at..];
+        let end = tag.find('>')?;
+        let tag = &tag[..end];
+        let src = html_attr(tag, "src")?;
+        if remote_src(&src) {
+            return None;
+        }
+        let alt = html_attr(tag, "alt")
+            .unwrap_or_else(|| src.rsplit('/').next().unwrap_or(&src).to_string());
+        return Some((alt, src));
+    }
+    None
 }
 
 pub fn parse_markdown(lines: &[String], c: &MdColors) -> Vec<DocRow> {
@@ -548,6 +633,16 @@ mod tests {
     }
 
     #[test]
+    fn single_chunk_terminates() {
+        let png = vec![1u8; 100];
+        let mut out = Vec::new();
+        kitty_transmit(&mut out, 9, &png);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(",m=0,q=2;"), "lone chunk must terminate");
+        assert!(!s.contains(",m=1,"), "no continuation expected");
+    }
+
+    #[test]
     fn image_line_parsing() {
         assert_eq!(
             line_image("![alt](pic.png)").unwrap(),
@@ -559,6 +654,15 @@ mod tests {
         );
         assert!(line_image("![a](https://x/y.png)").is_none());
         assert!(line_image("not an image").is_none());
+        assert_eq!(
+            line_image("<img src=\"pic/photo.jpg\" alt=\"hi\" width=\"100\">").unwrap(),
+            ("hi".to_string(), "pic/photo.jpg".to_string())
+        );
+        assert_eq!(
+            line_image("<img src='a.png'>").unwrap(),
+            ("a.png".to_string(), "a.png".to_string())
+        );
+        assert!(line_image("<img src=\"https://x/y.png\">").is_none());
     }
 
     #[test]
@@ -576,4 +680,3 @@ mod tests {
         assert!(spans.iter().any(|s| s.content == "c"));
     }
 }
-

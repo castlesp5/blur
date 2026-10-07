@@ -5,7 +5,7 @@ mod normal_mode;
 mod preview;
 mod select_modes;
 
-use helpers::{Highlighter, Tab, Visual, fg_color};
+use helpers::{Highlighter, Tab, Visual, fg_color, hue, tok};
 use normal_mode::normal_mode;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::*;
@@ -29,18 +29,23 @@ struct ThemeMenu {
     sel: usize,
 }
 
+/// returns false when the theme fails to load, so callers can
+/// retry or stay put instead of silently keeping a half state.
 fn apply_theme(
     theme: &mut opaline::Theme,
     highlighter: &mut Highlighter,
     tabs: &mut [Tab],
     name: &str,
-) {
+) -> bool {
     if let Some(t) = opaline::load_by_name(name) {
         *theme = t;
         highlighter.set_theme(theme);
         for tab in tabs.iter_mut() {
             tab.highlight_cache = None;
         }
+        true
+    } else {
+        false
     }
 }
 
@@ -108,8 +113,25 @@ fn save_config_theme(name: &str) {
     }
 }
 
+/// close the current tab. returns true when the app should exit.
+fn drop_current_tab(tabs: &mut Vec<Tab>, tab_selector: &mut usize) -> bool {
+    if tabs.len() > 1 {
+        tabs.remove(*tab_selector);
+        if *tab_selector >= tabs.len() {
+            *tab_selector = tabs.len() - 1;
+        }
+        false
+    } else {
+        true
+    }
+}
+
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableMouseCapture,
+    )?;
     let args: Vec<String> = std::env::args().collect();
     let mut theme_name = load_config_theme().unwrap_or_else(|| String::from("catppuccin-mocha"));
     let mut theme = opaline::load_by_name(&theme_name).unwrap();
@@ -136,6 +158,9 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut filled_now = String::new();
     let mut pv = preview::PreviewState::new();
     let mut fout = preview::FrameOut::default();
+    let mut layout = preview::UiLayout::default();
+    let mut confirm_all = false;
+    let mut press: Option<(i32, i32)> = None;
     tabs.push(Tab::new());
     match args.len() {
         1 => {}
@@ -167,6 +192,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 &theme_name,
                 &mut pv,
                 &mut fout,
+                &mut layout,
+                confirm_all,
                 mode,
                 &the_command_line,
             )
@@ -187,6 +214,129 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             crossterm::event::Event::Resize(_, _) => {
                 preview::clear_media(&mut pv);
             }
+            crossterm::event::Event::Mouse(m) => {
+                use crossterm::event::{MouseButton, MouseEventKind};
+                let (cx, cy) = (m.column, m.row);
+                let hit =
+                    |r: Rect| cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height;
+                if mode == 403 {
+                    // left half confirms, anywhere else cancels. never
+                    // destructive on an accidental click outside.
+                    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        let yes = layout
+                            .modal
+                            .map(|a| hit(a) && cx < a.x + a.width / 2)
+                            .unwrap_or(false);
+                        if yes {
+                            if confirm_all {
+                                break;
+                            }
+                            if drop_current_tab(&mut tabs, &mut tab_selector) {
+                                break;
+                            }
+                            mode = 0;
+                        } else {
+                            confirm_all = false;
+                            mode = 0;
+                        }
+                    }
+                } else if mode == 12 {
+                    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+                        && let Some((area, top, rows)) = layout.picker
+                        && hit(area)
+                        && cy > area.y
+                        && cy < area.y + area.height - 1
+                    {
+                        let r = (cy - area.y - 1) as usize;
+                                if r < rows && !menu.names.is_empty() {
+                                    menu.sel = (top + r).min(menu.names.len() - 1);
+                                    if let Some(name) = menu.names.get(menu.sel).cloned()
+                                        && apply_theme(&mut theme, &mut highlighter, &mut tabs, &name)
+                                    {
+                                        theme_name = name;
+                                        save_config_theme(&theme_name);
+                                        mode = 0;
+                                    }
+                                }
+                    }
+                } else if matches!(mode, 401 | 402) {
+                    if matches!(m.kind, MouseEventKind::Down(_)) {
+                        mode = if mode == 401 { 11 } else { 10 };
+                    }
+                } else if matches!(mode, 0..=3) {
+                    if cy == layout.tab_y {
+                        if let Some((_, _, idx)) = layout
+                            .tab_pills
+                            .iter()
+                            .find(|(x0, x1, _)| cx >= *x0 && cx < *x1)
+                        {
+                            tab_selector = *idx;
+                            press = None;
+                        }
+                    } else {
+                        let inner = layout.edit_inner;
+                        let edit_hit = hit(inner);
+                        let prev_hit = layout.prev_inner.map(hit).unwrap_or(false);
+                        let place = |t: &mut Tab| {
+                            preview::cell_to_buffer(
+                                &t.input_box,
+                                inner.x,
+                                layout.gutter_w,
+                                t.scroll_x,
+                                t.scroll_y,
+                                cx,
+                                cy,
+                                inner.y,
+                            )
+                        };
+                        match m.kind {
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                if edit_hit {
+                                    let t = &mut tabs[tab_selector];
+                                    let (ry, rx) = place(t);
+                                    t.cursor_y = ry;
+                                    t.cursor_x = rx;
+                                    press = Some((ry, rx));
+                                } else {
+                                    press = None;
+                                }
+                            }
+                            MouseEventKind::Drag(MouseButton::Left) => {
+                                if edit_hit {
+                                    if mode == 0
+                                        && let Some((py, px)) = press
+                                    {
+                                        vis.v_x = px.max(0) as usize;
+                                        vis.v_y = py.max(0) as usize;
+                                        vis.on = true;
+                                        mode = 2;
+                                    }
+                                    if mode == 2 || mode == 3 {
+                                        let t = &mut tabs[tab_selector];
+                                        let (ry, rx) = place(t);
+                                        t.cursor_y = ry;
+                                        t.cursor_x = rx;
+                                    }
+                                }
+                            }
+                            MouseEventKind::Up(_) => {
+                                press = None;
+                            }
+                            MouseEventKind::ScrollUp => {
+                                if edit_hit || prev_hit {
+                                    let t = &mut tabs[tab_selector];
+                                    t.scroll_y = t.scroll_y.saturating_sub(3);
+                                }
+                            }
+                            MouseEventKind::ScrollDown if (edit_hit || prev_hit) => {
+                                let t = &mut tabs[tab_selector];
+                                t.scroll_y = t.scroll_y.saturating_add(3);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
             crossterm::event::Event::Key(event_key) => {
                 match mode {
                     0 => {
@@ -206,6 +356,29 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                             theme_prev = theme_name.clone();
                             fill_dots(&mut menu);
                             mode = 12;
+                        } else if event_key.code == crossterm::event::KeyCode::Char('Q') {
+                            // quit everything, confirming when anything is unsaved
+                            if tabs.iter().any(|t| !t.saved) {
+                                confirm_all = true;
+                                mode = 403;
+                            } else {
+                                break;
+                            }
+                        } else if event_key.code == crossterm::event::KeyCode::Char('X') {
+                            // close all saved tabs, keep working where unsaved
+                            let mut i = 0;
+                            while i < tabs.len() {
+                                if tabs[i].saved {
+                                    tabs.remove(i);
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            if tabs.is_empty() {
+                                tabs.push(Tab::new());
+                            }
+                            tab_selector = tab_selector.min(tabs.len() - 1);
+                            mode = 0;
                         } else if !normal_mode(
                             &mut tabs,
                             &mut tab_selector,
@@ -217,15 +390,10 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         )
                         .unwrap()
                         {
-                            if tabs.len() > 1 {
-                                tabs.remove(tab_selector);
-                                if tab_selector >= tabs.len() {
-                                    tab_selector = tabs.len() - 1;
-                                }
-                                mode = 0;
-                            } else {
+                            if drop_current_tab(&mut tabs, &mut tab_selector) {
                                 break;
                             }
+                            mode = 0;
                         }
                     }
                     1 => {
@@ -271,15 +439,15 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 
                     403 => {
                         if !modes::unsaved_work_mode(*event_key, &mut mode).unwrap() {
-                            if tabs.len() > 1 {
-                                tabs.remove(tab_selector);
-                                if tab_selector >= tabs.len() {
-                                    tab_selector = tabs.len() - 1;
-                                }
-                                mode = 0;
-                            } else {
+                            if confirm_all {
                                 break;
                             }
+                            if drop_current_tab(&mut tabs, &mut tab_selector) {
+                                break;
+                            }
+                            mode = 0;
+                        } else if mode == 0 {
+                            confirm_all = false;
                         }
                     }
                     // theme picker: move with live preview, enter keeps, esc restores
@@ -309,11 +477,19 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                                 }
                             }
                             crossterm::event::KeyCode::Enter => {
-                                if let Some(name) = menu.names.get(menu.sel) {
-                                    theme_name = name.clone();
-                                    save_config_theme(&theme_name);
+                                // re-apply explicitly so enter never depends
+                                // on preview state. on failure the picker
+                                // stays open instead of going half broken.
+                                if let Some(name) = menu.names.get(menu.sel).cloned() {
+                                    if apply_theme(&mut theme, &mut highlighter, &mut tabs, &name)
+                                    {
+                                        theme_name = name;
+                                        save_config_theme(&theme_name);
+                                        mode = 0;
+                                    }
+                                } else {
+                                    mode = 0;
                                 }
-                                mode = 0;
                             }
                             crossterm::event::KeyCode::Esc => {
                                 let back = theme_prev.clone();
@@ -344,49 +520,10 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableMouseCapture,
         crossterm::cursor::SetCursorStyle::DefaultUserShape,
     )?;
     Ok(())
-}
-
-/// resolve a hue across every opaline theme. only the catppuccin
-/// family defines raw names like "blue" or "mauve", so each hue falls
-/// back through shared semantic tokens. never returns FALLBACK.
-fn hue(theme: &opaline::Theme, hue: &str) -> opaline::OpalineColor {
-    if let Some(c) = theme.try_color(hue) {
-        return c;
-    }
-    let fallbacks: &[&str] = match hue {
-        "blue" => &["accent.secondary", "info"],
-        "green" => &["success", "accent.primary"],
-        "mauve" => &["accent.primary", "accent.tertiary"],
-        "pink" => &["accent.tertiary", "accent.primary"],
-        "peach" => &["warning", "accent.tertiary"],
-        "red" => &["error"],
-        "yellow" => &["warning"],
-        "teal" => &["accent.secondary", "success"],
-        "sky" | "sapphire" => &["accent.secondary", "info"],
-        "lavender" => &["accent.primary"],
-        "overlay0" | "subtext0" => &["text.dim"],
-        _ => &[],
-    };
-    fallbacks
-        .iter()
-        .find_map(|k| theme.try_color(k))
-        .unwrap_or_else(|| theme.color("text.primary"))
-}
-
-/// resolve a structural token with a safe fallback chain.
-fn tok(theme: &opaline::Theme, key: &str) -> opaline::OpalineColor {
-    let fallbacks: &[&str] = match key {
-        "border.unfocused" => &["text.dim"],
-        "accent.deep" => &["accent.primary"],
-        _ => &[],
-    };
-    theme
-        .try_color(key)
-        .or_else(|| fallbacks.iter().find_map(|k| theme.try_color(k)))
-        .unwrap_or_else(|| theme.color("text.primary"))
 }
 
 fn mode_style(mode: i32, theme: &opaline::Theme) -> (String, Style, Color) {
@@ -557,6 +694,8 @@ fn renderer(
     theme_name: &str,
     pv: &mut preview::PreviewState,
     fout: &mut preview::FrameOut,
+    lay: &mut preview::UiLayout,
+    quit_all: bool,
     mode: i32,
     the_command_line: &str,
 ) {
@@ -719,12 +858,20 @@ fn renderer(
         }
     }
     let mut tabline = Line::from(vec![Span::styled(" ", Style::default().bg(base))]);
+    lay.tab_pills.clear();
+    lay.tab_y = tab_area.y;
+    lay.prev_inner = None;
+    lay.picker = None;
+    let mut pill_x = tab_area.x + 1;
     if lo > 0 {
         tabline
             .spans
             .push(Span::styled("‹ ", Style::default().fg(dim).bg(base)));
+        pill_x += 2;
     }
-    for (spans, _) in pills.iter().take(hi_excl).skip(lo) {
+    for (k, (spans, w)) in pills.iter().enumerate().take(hi_excl).skip(lo) {
+        lay.tab_pills.push((pill_x, pill_x + *w as u16, k));
+        pill_x += *w as u16;
         tabline.spans.extend(spans.clone());
     }
     if hi_excl < pills.len() {
@@ -796,13 +943,26 @@ fn renderer(
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(frame_col))
         .style(Style::default().bg(base))
-        // title shows the parent dir, the name already lives in the tabline
+        // title shows the parent dir, the name already lives in the tabline.
+        // bare filenames show the name itself, never a wrong "untitled".
         .title_top({
             let dir = tab
                 .file_name
                 .rsplit_once('/')
-                .map(|(d, _)| d.to_string())
-                .unwrap_or_else(|| "untitled".to_string());
+                .map(|(d, _)| {
+                    if d.is_empty() {
+                        "/".to_string()
+                    } else {
+                        d.to_string()
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if tab.file_name.is_empty() {
+                        "untitled".to_string()
+                    } else {
+                        short_of(&tab.file_name)
+                    }
+                });
             Line::from(vec![
                 Span::styled(" ", Style::default().bg(base)),
                 Span::styled("", Style::default().fg(focus).bg(base)),
@@ -830,6 +990,8 @@ fn renderer(
         .title_alignment(Alignment::Right);
     let inner = block.inner(code_outer);
     frame.render_widget(block, code_outer);
+    lay.edit_inner = inner;
+    lay.gutter_w = gutter_w;
 
     let code_w = inner.width.saturating_sub(1);
     if total > 1 && total as u16 > inner.height && code_w > 0 && inner.height > 0 {
@@ -902,6 +1064,7 @@ fn renderer(
             .title_alignment(Alignment::Right);
         let pinner = pblock.inner(prev_area);
         frame.render_widget(pblock, prev_area);
+        lay.prev_inner = Some(pinner);
 
         let cols = pinner.width;
         let mut plines: Vec<Line> = Vec::new();
@@ -910,18 +1073,22 @@ fn renderer(
             match row {
                 preview::DocRow::Text(l) => plines.push(l),
                 preview::DocRow::Media { alt, path } => {
-                    let full = format!("{dir}/{path}");
-                    let missing = !std::path::Path::new(&full).exists();
-                    let placed =
-                        !missing && preview::kitty_supported() && cols > 4 && pinner.height > 0;
-                    if placed && let Some((id, rows)) = preview::ensure_media(pv, &full, cols) {
-                        medias.push((id, plines.len()));
-                        for _ in 0..rows {
-                            plines.push(Line::from(""));
+                    // absolute refs stay absolute, ~/ expands, the rest
+                    // joins the file dir. the old dir-prefix-everything
+                    // mangled absolute paths into missing files.
+                    let full = if let Some(rest) = path.strip_prefix("~/") {
+                        match std::env::var("HOME") {
+                            Ok(h) => format!("{h}/{rest}"),
+                            Err(_) => path.clone(),
                         }
-                        continue;
-                    }
-                    // text fallback on plain terminals, missing files, errors
+                    } else if path.starts_with('/') {
+                        path.clone()
+                    } else {
+                        format!("{dir}/{path}")
+                    };
+                    let missing = !std::path::Path::new(&full).exists();
+                    // placeholder always draws: the image covers it where
+                    // the protocol works, text remains everywhere else.
                     plines.push(Line::from(vec![
                         Span::styled("[img ", Style::default().fg(dim).bg(base)),
                         Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
@@ -934,6 +1101,17 @@ fn renderer(
                             Style::default().fg(dim).bg(base),
                         ),
                     ]));
+                    if !missing
+                        && preview::kitty_supported()
+                        && cols > 4
+                        && pinner.height > 0
+                        && let Some((id, rows)) = preview::ensure_media(pv, &full, cols)
+                    {
+                        medias.push((id, plines.len() - 1));
+                        for _ in 1..rows {
+                            plines.push(Line::from(""));
+                        }
+                    }
                 }
             }
         }
@@ -1032,10 +1210,16 @@ fn renderer(
     frame.render_widget(Paragraph::new(status).bg(base), status_area);
 
     // rounded modal for confirm and errors
+    lay.modal = None;
     if matches!(mode, 401..=403) {
+        let unsaved_n = before.iter().filter(|t| !t.saved).count()
+            + (!tab.saved as usize)
+            + after.iter().filter(|t| !t.saved).count();
+        let all_text = format!("unsaved work in {} tabs, quit anyway?", unsaved_n.max(1));
         let text: &str = match mode {
             401 => "can't open that file",
             402 => "can't save that file",
+            _ if quit_all => &all_text,
             _ => "unsaved work, quit anyway?",
         };
         let keys: &str = match mode {
@@ -1067,6 +1251,10 @@ fn renderer(
             .alignment(Alignment::Center),
             inner,
         );
+        // left half confirms, right half cancels
+        if mode == 403 {
+            lay.modal = Some(area);
+        }
     }
 
     // adaptive cursor shape per state: block at rest, bar while typing,
@@ -1079,9 +1267,9 @@ fn renderer(
     };
     let _ = crossterm::execute!(std::io::stdout(), shape);
 
-    // theme picker: centered scrollable list, three accent dots per row
     // theme picker: quickpick popup with accent dots, current marker,
     // footer hints. geometry is clamped so tiny screens never break.
+    lay.picker = None;
     if mode == 12 && !menu.names.is_empty() {
         let fw = frame.area().width;
         let fh = frame.area().height;
@@ -1125,6 +1313,7 @@ fn renderer(
                 .sel
                 .saturating_sub(rows.saturating_sub(1) / 2)
                 .min(n.saturating_sub(rows));
+            lay.picker = Some((area, top, rows));
             let mut lines: Vec<Line> = (0..rows)
                 .map(|r| {
                     let i = top + r;

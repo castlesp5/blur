@@ -21,6 +21,46 @@ fn wcag_contrast(l1: f64, l2: f64) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
+/// resolve a hue across every opaline theme. only the catppuccin
+/// family defines raw names like "blue" or "mauve", so each hue falls
+/// back through shared semantic tokens. never returns FALLBACK.
+pub fn hue(theme: &opaline::Theme, hue: &str) -> opaline::OpalineColor {
+    if let Some(c) = theme.try_color(hue) {
+        return c;
+    }
+    let fallbacks: &[&str] = match hue {
+        "blue" => &["accent.secondary", "info"],
+        "green" => &["success", "accent.primary"],
+        "mauve" => &["accent.primary", "accent.tertiary"],
+        "pink" => &["accent.tertiary", "accent.primary"],
+        "peach" => &["warning", "accent.tertiary"],
+        "red" => &["error"],
+        "yellow" => &["warning"],
+        "teal" => &["accent.secondary", "success"],
+        "sky" | "sapphire" => &["accent.secondary", "info"],
+        "lavender" => &["accent.primary"],
+        "overlay0" | "subtext0" => &["text.dim"],
+        _ => &[],
+    };
+    fallbacks
+        .iter()
+        .find_map(|k| theme.try_color(k))
+        .unwrap_or_else(|| theme.color("text.primary"))
+}
+
+/// resolve a structural token with a safe fallback chain.
+pub fn tok(theme: &opaline::Theme, key: &str) -> opaline::OpalineColor {
+    let fallbacks: &[&str] = match key {
+        "border.unfocused" => &["text.dim"],
+        "accent.deep" => &["accent.primary"],
+        _ => &[],
+    };
+    theme
+        .try_color(key)
+        .or_else(|| fallbacks.iter().find_map(|k| theme.try_color(k)))
+        .unwrap_or_else(|| theme.color("text.primary"))
+}
+
 pub fn fg_color(bg: opaline::OpalineColor) -> ratatui::style::Color {
     let to_linear = |c: u8| {
         let c = c as f64 / 255.0;
@@ -45,6 +85,7 @@ pub fn fg_color(bg: opaline::OpalineColor) -> ratatui::style::Color {
 pub struct Highlighter {
     syntax_set: syntect::parsing::SyntaxSet,
     syntect_theme: syntect::highlighting::Theme,
+    md: crate::preview::MdColors,
 }
 
 impl Highlighter {
@@ -54,6 +95,7 @@ impl Highlighter {
         Highlighter {
             syntax_set,
             syntect_theme,
+            md: md_colors(theme),
         }
     }
 
@@ -61,6 +103,7 @@ impl Highlighter {
     /// only the syntect theme rebuilds. callers must clear tab caches.
     pub fn set_theme(&mut self, theme: &opaline::Theme) {
         self.syntect_theme = opaline::adapters::syntect::to_syntect_theme(theme);
+        self.md = md_colors(theme);
     }
 
     /// auto detect language: file path first, then shebang / first line,
@@ -129,12 +172,77 @@ impl Highlighter {
         }
         self.syntax_set.find_syntax_plain_text()
     }
+}
 
+fn md_colors(theme: &opaline::Theme) -> crate::preview::MdColors {
+    use ratatui::style::Color;
+    let c = |v: opaline::OpalineColor| Color::Rgb(v.r, v.g, v.b);
+    crate::preview::MdColors {
+        text: c(tok(theme, "text.primary")),
+        dim: c(tok(theme, "text.dim")),
+        faint: c(tok(theme, "border.unfocused")),
+        accent: c(tok(theme, "accent.deep")),
+        code: c(hue(theme, "green")),
+        quote: c(tok(theme, "text.dim")),
+    }
+}
+
+impl Highlighter {
     pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
         if let Some(cached) = &tab.highlight_cache {
             return cached.clone();
         }
         let syntax = self.detect_syntax(tab);
+        // syntect themes carry no markup scopes, so markdown gets a
+        // dedicated pass: real colors in the editor, not flat text.
+        if syntax.name == "Markdown" {
+            let mut out = Vec::new();
+            let mut fence = false;
+            for line in &tab.input_box {
+                if line.trim_start().starts_with("```") {
+                    fence = !fence;
+                    out.push(ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            line.to_string(),
+                            ratatui::style::Style::default().fg(self.md.dim),
+                        ),
+                    ]));
+                    continue;
+                }
+                if fence {
+                    out.push(ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            line.to_string(),
+                            ratatui::style::Style::default().fg(self.md.code),
+                        ),
+                    ]));
+                    continue;
+                }
+                let t = line.trim_start();
+                let hashes = t.chars().take_while(|c| *c == '#').count();
+                if hashes > 0 && t[hashes..].starts_with(' ') {
+                    let mut spans = vec![ratatui::text::Span::styled(
+                        " ".repeat(line.len() - t.len()) + &"#".repeat(hashes) + " ",
+                        ratatui::style::Style::default().fg(self.md.dim),
+                    )];
+                    spans.extend(crate::preview::inline(
+                        t[hashes + 1..].trim_start(),
+                        &self.md,
+                    ));
+                    // headings read bold without any background wash
+                    for s in spans.iter_mut().skip(1) {
+                        s.style = s.style.add_modifier(ratatui::style::Modifier::BOLD);
+                    }
+                    out.push(ratatui::text::Line::from(spans));
+                    continue;
+                }
+                out.push(ratatui::text::Line::from(crate::preview::inline(
+                    line, &self.md,
+                )));
+            }
+            tab.highlight_cache = Some(out.clone());
+            return out;
+        }
 
         let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
         let mut spans: Vec<ratatui::text::Line> = Vec::new();

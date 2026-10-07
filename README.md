@@ -74,6 +74,8 @@ If the file does not exist, blur starts with an empty buffer bound to that path.
 | `Tab` / `n`, `Shift+Tab` | Next / previous tab |
 | `Delete` / `Backspace` | Delete under / before cursor |
 | `q` | Close tab or quit (confirms when any tab is unsaved) |
+| `Q` | Quit all tabs (confirms when anything is unsaved) |
+| `X` | Close all saved tabs |
 | `t` | Theme picker (live preview, `Enter` applies, `Esc` restores) |
 | `P` | Toggle readme preview pane (markdown files) |
 
@@ -156,9 +158,19 @@ The file is written whenever a theme is applied and read at startup. Unknown the
 
 ## Preview pane
 
-Press `P` in Normal mode while editing markdown to open a live side-by-side preview. It re-renders on every edit and scrolls in sync with the editor. Headings, lists, quotes, code fences, links, and inline marks render in theme colors.
+Press `P` in Normal mode while editing markdown to open a live side-by-side preview. It re-renders on every edit and scrolls in sync with the editor. Headings, lists, quotes, code fences, links, and inline marks render in theme colors. Markdown files also get real syntax highlighting in the editor itself.
 
-Images (`![alt](path)`) display inline over the kitty graphics protocol on kitty, WezTerm, and ghostty, including nested tmux sessions. Other terminals show a clean text placeholder, as do missing files. Press `P` again to close.
+Images (`![alt](path)` and `<img src="...">`) display inline over the kitty graphics protocol on kitty, WezTerm, and ghostty, including nested tmux sessions. Relative paths resolve from the file's directory; absolute and `~/` paths work too. A text placeholder always renders underneath, so plain terminals and missing files stay readable. Press `P` again to close.
+
+## Mouse
+
+Mouse capture is enabled for the whole app:
+
+- click in the editor to place the cursor, drag to select
+- click a tab pill to switch tabs
+- click a theme row to apply it immediately
+- click the left half of the confirm modal to quit, anywhere else to cancel
+- scroll over the editor or preview to scroll
 
 ## Undo and redo
 
@@ -172,6 +184,8 @@ Highlighting uses `syntect` with the `catppuccin-mocha` theme loaded through `op
 2. Shebang and first-line detection (works for untitled buffers).
 3. Content sniffing for common constructs.
 4. Plain text fallback.
+
+Markdown gets a dedicated pass because converter themes carry no markup scopes: headings, emphasis, code, links, lists, and fenced blocks highlight in the editor with zero background fills.
 
 Results are cached per tab and invalidated on every edit, undo, and redo. Statusline contrast is derived at runtime from WCAG relative luminance.
 
@@ -231,4 +245,5 @@ Ismael Boujdad ([github.com/castlesp5](https://github.com/castlesp5))
 
 ### Credits
 
-Artem Tsitronov ([github.com/artemtsitronov](https://github.com/artemtsitronov))
+- Artem Tsitronov ([github.com/artemtsitronov](https://github.com/artemtsitronov))
+- Soumalya Das ([github.com/programmersd21](https://github.com/programmersd21))
