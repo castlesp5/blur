@@ -1,10 +1,16 @@
 mod controls;
-    mod helpers;
+mod helpers;
+mod lsp;
+mod lsp_manager;
 mod modes;
 mod normal_mode;
 mod select_modes;
 
+use std::path::Path;
+use std::time::Duration;
+
 use helpers::{Highlighter, Tab, Visual, fg_color};
+use lsp_manager::LspManager;
 use normal_mode::normal_mode;
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::*;
@@ -19,6 +25,27 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
+fn sync_lsp(lsp: &mut LspManager, tab: &mut Tab) {
+    if tab.file_name.is_empty() {
+        return;
+    }
+    if tab.lsp_file == tab.file_name && !tab.lsp_dirty {
+        return;
+    }
+    let path = Path::new(&tab.file_name);
+    let text = tab.input_box.join("\n");
+    if tab.lsp_file != tab.file_name {
+        if !path.exists() {
+            return;
+        }
+        lsp.open(path, &text);
+        tab.lsp_file = tab.file_name.clone();
+    } else {
+        lsp.change(path, &text);
+    }
+    tab.lsp_dirty = false;
+}
+
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
     let args: Vec<String> = std::env::args().collect();
@@ -26,6 +53,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 
     let mut tabs = Vec::new();
     let mut tab_selector: usize = 0;
+    let mut lsp = LspManager::default();
+
     let highlighter = Highlighter::new(&theme);
     let mut vis = Visual::new();
     let mut mode = 0;
@@ -47,6 +76,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         },
     }
     loop {
+        lsp.poll();
+        sync_lsp(&mut lsp, &mut tabs[tab_selector]);
         let tab_names = &tabs
             .iter()
             .map(|x| {
@@ -59,6 +90,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             .collect();
 
         let mut tab = &mut tabs[tab_selector];
+
         terminal.draw(|frame| {
             renderer(
                 frame,
@@ -67,11 +99,15 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 &tab_selector,
                 &mut tab,
                 &highlighter,
+                &lsp,
                 mode,
                 &mut the_command_line,
             )
         })?;
 
+        if !crossterm::event::poll(Duration::from_millis(200))? {
+            continue; // nothing pressed: aaaw :(
+        }
         let event = crossterm::event::read()?;
         let mut the_text = tab.input_box.clone();
         match &event {
@@ -97,7 +133,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         {
                             if tabs.len() > 1 {
                                 tabs.remove(tab_selector);
-                                if tab_selector > tabs.len() {
+                                if tab_selector >= tabs.len() {
                                     crate::helpers::log(&format!("{}", tab_selector));
                                     tab_selector -= 1;
                                 }
@@ -192,6 +228,7 @@ fn renderer(
     tab_selector: &usize,
     tab: &mut Tab,
     highlighter: &Highlighter,
+    lsp: &LspManager,
     mode: i32,
     the_command_line: &str,
 ) {
@@ -334,7 +371,7 @@ fn renderer(
             Style::default().fg(theme.color("accent.primary").into()),
         ),
         Span::styled(
-            " Blur 1.0 ",
+            " Blur 1.2 ",
             Style::default()
                 .fg(fg_color(theme.color("accent.primary")))
                 .bg(theme.color("accent.primary").into())
@@ -342,10 +379,15 @@ fn renderer(
         ),
     ]);
 
-    let input =
-        ratatui::widgets::Paragraph::new(ratatui::text::Text::from(highlighter.highlight(tab)))
-            .scroll((tab.scroll_y, tab.scroll_x))
-            .bg(theme.color("bg.base"));
+    let diags = lsp.diagnostics(Path::new(&tab.file_name));
+    let input = ratatui::widgets::Paragraph::new(ratatui::text::Text::from(highlighter.highlight(
+        tab,
+        diags,
+        inner.height as usize,
+    )))
+    .scroll((0, tab.scroll_x))
+    .bg(theme.color("bg.base"));
+
     let tabs = ratatui::widgets::Tabs::new(tab_names.clone())
         .select(*tab_selector)
         .divider(ratatui::symbols::DOT)

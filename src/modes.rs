@@ -44,6 +44,7 @@ pub fn insert_mode(
             let y = tab.cursor_y as usize;
             let x = tab.cursor_x as usize;
             let rest = tab.input_box[y].split_off(x);
+            tab.unsave();
             tab.input_box.insert(y + 1, rest);
             tab.undo_stack
                 .push(EditRecord::SplitLine { row: y, col: x });

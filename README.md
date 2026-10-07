@@ -1,4 +1,4 @@
-# Blur: V1.0
+# Blur: V1.2
 
 A fast, modal, terminal-based text editor written in Rust: built on [`ratatui`](https://github.com/ratatui-org/ratatui) and [`crossterm`](https://github.com/crossterm-rs/crossterm), with Vim-inspired keybindings, syntax highlighting via `syntect`, and theming powered by `opaline`.
 
@@ -22,6 +22,7 @@ A fast, modal, terminal-based text editor written in Rust: built on [`ratatui`](
   - [Unsaved Work Prompt](#unsaved-work-prompt)
 - [Tabs](#tabs)
 - [Undo / Redo](#undo--redo)
+- [LSP](#lsp)
 - [Syntax Highlighting & Theming](#syntax-highlighting--theming)
 - [Project Structure](#project-structure)
 - [Architecture Notes](#architecture-notes)
@@ -155,7 +156,7 @@ Entered with `V` from Normal mode. Selects whole lines between the anchor row an
 | `J`    | Move the selected block of lines down                 |
 | `K`    | Move the selected block of lines up                   |
 | `>`    | Indent all selected lines                             |
-| `<`    | Unindent all selected lines                           |
+| `<`    | Unindent all selectedls lines                           |
 | `d`    | Delete all selected lines, return to Normal mode       |
 | `Esc`  | Cancel and return to Normal mode                        |
 
@@ -193,6 +194,11 @@ Blur supports multiple open buffers ("tabs") in a single session:
 ## Undo / Redo
 
 Every meaningful edit: character insertions/deletions, string insert/removal (e.g. indentation), line splits/merges, line insertions/removals, and whole-line moves: is recorded as an `EditRecord`. `u` pops from the undo stack and applies the inverse operation; `r` pops from the redo stack and re-applies it. Performing a new edit clears the redo stack, matching standard editor semantics.
+
+## LSP
+
+Language Server protocol is supported, and highlights the code depending of the severity.
+It was tested with rust-analyzer on src/main.rs
 
 ## Syntax Highlighting & Theming
 

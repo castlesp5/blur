@@ -1,11 +1,18 @@
 [package]
 name = "blur"
-version = "1.0.0"
+version = "1.2.0"
 edition = "2024"
 
 [dependencies]
+async-lsp-client = "0.2.3"
 crossterm = "0.29.0"
+lsp-types = "0.97.0"
 opaline = { version = "0.4.2", features = ["syntect"] }
 ratatui = "0.30.2"
+serde = "1.0.229"
+serde_json = "1.0.151"
 syntect = "5.3.0"
 unicode-width = "0.2.2"
+
+[profile.dev]
+opt-level = 3

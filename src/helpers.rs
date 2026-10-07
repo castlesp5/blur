@@ -1,24 +1,26 @@
+use crate::lsp::{self, Diag};
+use opaline::Theme;
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
 use syntect::parsing::SyntaxSet;
 
-
-
 pub struct Visual {
-            pub v_x: usize,
-            pub v_y: usize,
-            pub on : bool,
+    pub v_x: usize,
+    pub v_y: usize,
+    pub on: bool,
 }
 
 impl Visual {
     pub fn new() -> Self {
-        Visual { v_x: 0, v_y: 0, on: false}
+        Visual {
+            v_x: 0,
+            v_y: 0,
+            on: false,
+        }
     }
-
 }
-
-
-
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn wcag_contrast(l1: f64, l2: f64) -> f64 {
     let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
@@ -49,6 +51,7 @@ pub fn fg_color(bg: opaline::OpalineColor) -> ratatui::style::Color {
 pub struct Highlighter {
     syntax_set: syntect::parsing::SyntaxSet,
     syntect_theme: syntect::highlighting::Theme,
+    diag_colors: [Color; 4],
 }
 
 impl Highlighter {
@@ -58,24 +61,15 @@ impl Highlighter {
         Highlighter {
             syntax_set,
             syntect_theme,
+            diag_colors: diag_colors(theme),
         }
     }
-
-    pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
-        if let Some(cached) = &tab.highlight_cache
-        {
-            return cached.clone();
-        }
+    fn syntax_lines(&self, tab: &Tab) -> Vec<Line<'static>> {
         if tab.file_name.is_empty() {
             return tab
                 .input_box
                 .iter()
-                .map(|line| {
-                    ratatui::text::Line::from(ratatui::text::Span::styled(
-                        line.to_string(),
-                        ratatui::style::Style::default().fg(ratatui::style::Color::White),
-                    ))
-                })
+                .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
                 .collect();
         }
         let syntax = self
@@ -84,29 +78,128 @@ impl Highlighter {
             .ok()
             .flatten()
             .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+        let mut h = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
+        tab.input_box
+            .iter()
+            .map(|line| {
+                let spans: Vec<Span<'static>> = h
+                    .highlight_line(line, &self.syntax_set)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(st, text)| {
+                        Span::styled(
+                            text.trim_end_matches('\n').to_string(),
+                            Style::default().fg(Color::Rgb(
+                                st.foreground.r,
+                                st.foreground.g,
+                                st.foreground.b,
+                            )),
+                        )
+                    })
+                    .collect();
+                Line::from(spans)
+            })
+            .collect()
+    }
 
-        let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
-        let mut spans: Vec<ratatui::text::Line> = Vec::new();
-
-        for line in &tab.input_box {
-            let range = the_highlighter
-                .highlight_line(line, &self.syntax_set)
-                .unwrap_or_default();
-            let mut spans_for_line: Vec<ratatui::text::Span> = Vec::new();
-            for (style, text) in range {
-                let fg = style.foreground;
-                let span = ratatui::text::Span::styled(
-                    text.trim_end_matches('\n').to_string(),
-                    ratatui::style::Style::default()
-                        .fg(ratatui::style::Color::Rgb(fg.r, fg.g, fg.b)),
-                );
-                spans_for_line.push(span);
-            }
-            spans.push(ratatui::text::Line::from(spans_for_line));
+    pub fn highlight(&self, tab: &mut Tab, diags: &[Diag], height: usize) -> Vec<Line<'static>> {
+        if tab.highlight_cache.is_none() {
+            tab.highlight_cache = Some(self.syntax_lines(tab));
         }
-        tab.highlight_cache = Some(spans.clone());
+        let base = tab.highlight_cache.as_ref().unwrap();
+        base.iter()
+            .enumerate()
+            .skip(tab.scroll_y as usize)
+            .take(height)
+            .map(|(i, line)| {
+                let text = tab.input_box.get(i).map_or("", |s| s.as_str());
+                let marks = marks_for_row(i as u32, text, diags);
+                Line::from(overlay(line.spans.clone(), &marks, &self.diag_colors))
+            })
+            .collect()
+    }
+}
+
+fn diag_colors(theme: &Theme) -> [ratatui::style::Color; 4] {
+    [
+        theme.color("error").into(),
+        theme.color("warning").into(),
+        theme.color("info").into(),
+        theme.color("text.muted").into(),
+    ]
+}
+
+fn underline(sev: u8, colors: &[ratatui::style::Color; 4]) -> Style {
+    let c = colors[(sev.clamp(1, 4) - 1) as usize];
+    Style::default()
+        .fg(c)
+        .add_modifier(Modifier::UNDERLINED)
+        .underline_color(c)
+}
+
+// aio lsp shtuff
+
+pub fn marks_for_row(row: u32, line: &str, diags: &[Diag]) -> Vec<(usize, usize, u8)> {
+    let mut marks = Vec::new();
+    for d in diags {
+        if row < d.start.0 || row > d.end.0 {
+            continue;
+        }
+        let s = if row == d.start.0 {
+            lsp::utf16_to_byte(line, d.start.1)
+        } else {
+            0
+        };
+        let mut e = if row == d.end.0 {
+            lsp::utf16_to_byte(line, d.end.1)
+        } else {
+            line.len()
+        };
+        if e <= s {
+            e = line[s..].chars().next().map_or(s, |c| s + c.len_utf8());
+        }
+        if e > s {
+            marks.push((s, e, d.severity));
+        }
+    }
+    marks
+}
+
+pub fn overlay(
+    spans: Vec<Span<'static>>,
+    marks: &[(usize, usize, u8)],
+    colors: &[Color; 4],
+) -> Vec<Span<'static>> {
+    if marks.is_empty() {
         return spans;
     }
+    let piece = |text: String, base: Style, sev: Option<u8>| match sev {
+        Some(s) => Span::styled(text, base.patch(underline(s, colors))),
+        None => Span::styled(text, base),
+    };
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    for span in spans {
+        let mut buf = String::new();
+        let mut cur: Option<u8> = None;
+        for ch in span.content.chars() {
+            let sev = marks
+                .iter()
+                .filter(|m| pos >= m.0 && pos < m.1)
+                .map(|m| m.2)
+                .min();
+            if sev != cur && !buf.is_empty() {
+                out.push(piece(std::mem::take(&mut buf), span.style, cur));
+            }
+            cur = sev;
+            buf.push(ch);
+            pos += ch.len_utf8();
+        }
+        if !buf.is_empty() {
+            out.push(piece(buf, span.style, cur));
+        }
+    }
+    out
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -122,6 +215,9 @@ pub struct Tab {
     pub scroll_y: u16,
     pub undo_stack: Vec<EditRecord>,
     pub redo_stack: Vec<EditRecord>,
+    pub lsp_dirty: bool,
+    pub lsp_file: String,
+    pub lsp_sent: String,
 }
 
 impl Tab {
@@ -137,13 +233,16 @@ impl Tab {
             scroll_x: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            lsp_dirty: false,
+            lsp_file: String::new(),
+            lsp_sent: String::new(),
         }
     }
 
-    pub fn unsave(&mut self)
-    {
+    pub fn unsave(&mut self) {
         self.saved = false;
         self.highlight_cache = None;
+        self.lsp_dirty = true;
     }
 }
 
@@ -160,7 +259,7 @@ pub enum EditRecord {
     },
     RemoveString {
         row: usize,
-        col : usize,
+        col: usize,
         text: String,
     },
     SplitLine {
@@ -176,7 +275,7 @@ pub enum EditRecord {
     },
     RemoveLine {
         row: usize,
-        content: String 
+        content: String,
     },
     RemoveEmptyLine {
         row: usize,
@@ -217,7 +316,7 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
             input_box.remove(*row);
             (*row, 0)
         }
-        
+
         EditRecord::RemoveLine { row, content } => {
             input_box.insert(*row, content.clone());
             (*row, 0)
@@ -275,6 +374,7 @@ pub fn apply_forward(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
     }
 }
 
+#[allow(dead_code)]
 pub fn log(msg: &str) {
     use std::io::Write;
     if let Ok(mut file) = std::fs::OpenOptions::new()
