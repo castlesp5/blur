@@ -836,8 +836,9 @@ fn renderer(
 
     let total = tab.input_box.len().max(1);
     let digits = total.to_string().len().max(2) as u16;
-    // gutter renders as `{num:>digits} `, exactly digits + 1 cells
-    let gutter_w = digits + 1;
+    // gutter renders as `{num:>digits} │ `, exactly digits + 3 cells, so the
+    // divider always keeps one fixed space before the file content
+    let gutter_w = digits + 3;
     let text_w = code_outer.width.saturating_sub(gutter_w + 4);
     if visual_x <= tab.scroll_x {
         tab.scroll_x = visual_x;
@@ -1028,7 +1029,7 @@ fn renderer(
                 false
             };
 
-            let num = format!("{:>w$} │", i + 1, w = digits as usize);
+            let num = format!("{:>w$} │ ", i + 1, w = digits as usize);
             let num_st = if cur {
                 Style::default().fg(lav).bold()
             } else if in_selection {
@@ -1138,7 +1139,9 @@ fn renderer(
             .min(h.saturating_sub(1));
         for row in 0..h {
             let active = row == pos;
-            let ch = if active { "█" } else { "·" };
+            // half block so the thumb reads as a scrollbar and never gets
+            // mistaken for a second caret on the cursor row
+            let ch = if active { "▐" } else { "·" };
             let st = if active {
                 Style::default().fg(focus).bg(base)
             } else {

@@ -28,21 +28,20 @@ pub fn hue(theme: &opaline::Theme, hue: &str) -> opaline::OpalineColor {
     if let Some(c) = theme.try_color(hue) {
         return c;
     }
-    let fallbacks: &[&str] = match hue {
-        "blue" | "sapphire" | "sky" => {
-            &["accent.secondary", "info", "accent.primary", "text.primary"]
-        }
-        "green" | "teal" => &["success", "accent.primary", "text.primary"],
-        "mauve" | "pink" | "lavender" => &["accent.primary", "accent.tertiary", "accent.secondary"],
-        "peach" | "yellow" => &["warning", "accent.tertiary", "accent.primary"],
-        "red" => &["error", "warning", "accent.primary"],
-        "overlay0" | "subtext0" => &["text.dim", "text.muted"],
-        _ => &["accent.primary", "text.primary"],
+    // Map missing theme keys strictly to the theme's native semantic tokens
+    let mapped = match hue {
+        "blue" | "sapphire" | "sky" | "teal" => "accent.secondary",
+        "green" => "success",
+        "mauve" | "pink" | "lavender" => "accent.primary",
+        "peach" | "yellow" => "warning",
+        "red" => "error",
+        _ => "accent.primary",
     };
-    fallbacks
-        .iter()
-        .find_map(|k| theme.try_color(k))
-        .or_else(|| theme.try_color("accent.primary"))
+    if let Some(c) = theme.try_color(mapped) {
+        return c;
+    }
+    theme
+        .try_color("accent.primary")
         .or_else(|| theme.try_color("text.primary"))
         .unwrap_or(opaline::OpalineColor {
             r: 203,
