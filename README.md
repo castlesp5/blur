@@ -2,6 +2,11 @@
 
 ![demo](screenshots/syntax_highlighting.png)
 
+[![stars](https://img.shields.io/github/stars/castlesp5/blur?style=for-the-badge&logo=github&logoColor=%23fbf1c7&labelColor=%233c3836&color=%23d79921)](https://github.com/castlesp5/blur/stargazers)
+[![forks](https://img.shields.io/github/forks/castlesp5/blur?style=for-the-badge&logo=github&logoColor=%23fbf1c7&labelColor=%233c3836&color=%23d3869b)](https://github.com/castlesp5/blur/network/members)
+[![rust](https://img.shields.io/badge/rust-stable?style=for-the-badge&logo=rust&logoColor=%23fbf1c7&labelColor=%233c3836&color=%23b8bb26)](https://www.rust-lang.org/)
+[![ratatui](https://img.shields.io/badge/ratatui-tui?style=for-the-badge&logo=ratatui&logoColor=%23fbf1c7&labelColor=%233c3836&color=%2383a598)](https://ratatui.rs/)
+
 a modal terminal text editor written in rust.
 
 vim-style keys, syntax highlighting, a live markdown preview, and a
