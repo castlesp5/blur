@@ -18,6 +18,8 @@ use select_modes::{select_mode_line, select_mode1};
 use unicode_width::UnicodeWidthStr;
 
 fn main() -> std::io::Result<()> {
+    // forget files that no longer exist, the way other editors do
+    home::purge_missing();
     // image support is decided up front, see media::picker
     let (_, images) = load_config();
     ratatui::run(|terminal| app(terminal, media::picker(media::Images::from_config(images))))
@@ -165,6 +167,9 @@ fn home_screen(
 ) -> std::io::Result<Option<home::Choice>> {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
     let mut state = home::Home::new();
+    // start on the first action every time, so a later visit does not
+    // inherit wherever the cursor was left before
+    state.select_first();
     loop {
         let size = terminal.size()?;
         let height = size.height as usize;
@@ -351,6 +356,8 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
     let mut confirm_all = false;
     let mut press: Option<(i32, i32)> = None;
     let mut last_shape: Option<crossterm::cursor::SetCursorStyle> = None;
+    // set when normal mode asks for the start screen
+    let mut go_home = false;
     tabs.push(Tab::new());
     // no arguments means the start screen. one argument goes straight in.
     let start_file = if args.len() > 1 {
@@ -378,6 +385,45 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
         }
     }
     loop {
+        // h in normal mode returns here. tabs and undo history survive,
+        // and picking a file from the start screen reopens it.
+        if go_home {
+            go_home = false;
+            press = None;
+            media::clear(&mut imgs);
+            match home_screen(terminal, &theme)? {
+                Some(home::Choice::Open(path)) => {
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            let mut fresh = Tab::new();
+                            fresh.input_box = content.split('\n').map(str::to_string).collect();
+                            fresh.file_name = path.clone();
+                            fresh.saved = true;
+                            tabs.push(fresh);
+                            tab_selector = tabs.len() - 1;
+                        }
+                        Err(_) => {
+                            // keep the tabs, add an empty buffer for it
+                            let mut fresh = Tab::new();
+                            fresh.file_name = path.clone();
+                            tabs.push(fresh);
+                            tab_selector = tabs.len() - 1;
+                        }
+                    }
+                    home::record_recent(&path);
+                }
+                Some(home::Choice::New) => {
+                    tabs.push(Tab::new());
+                    tab_selector = tabs.len() - 1;
+                }
+                // quit and prompt never come back from the start screen
+                Some(home::Choice::Quit) | Some(home::Choice::Prompt) | None => {}
+            }
+            vis = Visual::new();
+            mode = 0;
+            the_command_line.clear();
+            filled_now.clear();
+        }
         // cursor shape belongs to the terminal, not the frame. write it
         // only when it actually changes, always outside the draw call.
         let shape = cursor_shape(mode);
@@ -660,7 +706,11 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                     0 => {
                         // preview pane and theme picker live here so
                         // normal_mode stays edit-only
-                        if event_key.code == crossterm::event::KeyCode::Char('P') {
+                        if event_key.code == crossterm::event::KeyCode::Char('h') {
+                            // back to the start screen, keeping tabs open
+                            go_home = true;
+                            mode = 0;
+                        } else if event_key.code == crossterm::event::KeyCode::Char('P') {
                             pv.open = !pv.open;
                             if !pv.open {
                                 media::clear(&mut imgs);
@@ -1675,31 +1725,43 @@ fn renderer(
     // help sheet, same rounded frame as the confirm box
     if mode == 13 {
         let groups: [(&str, &[(&str, &str)]); 4] = [
-            ("editing", &[
-                ("i a o", "insert, append, open line"),
-                ("v V", "visual, visual line"),
-                ("d", "delete selection or line"),
-                ("> <", "indent, unindent"),
-                ("u r", "undo, redo"),
-            ]),
-            ("files", &[
-                ("w W", "save, save as"),
-                ("O", "open in a new tab"),
-                ("N", "new tab"),
-                ("q Q X", "close, quit all, close saved"),
-            ]),
-            ("view", &[
-                ("P", "toggle preview pane"),
-                ("t", "theme picker"),
-                ("ctrl+d/u", "scroll half a page"),
-                ("page up/down", "scroll"),
-                ("home end", "line start, end"),
-            ]),
-            ("mouse", &[
-                ("click", "place cursor or pick a row"),
-                ("drag", "select"),
-                ("wheel", "scroll"),
-            ]),
+            (
+                "editing",
+                &[
+                    ("i a o", "insert, append, open line"),
+                    ("v V", "visual, visual line"),
+                    ("d", "delete selection or line"),
+                    ("> <", "indent, unindent"),
+                    ("u r", "undo, redo"),
+                ],
+            ),
+            (
+                "files",
+                &[
+                    ("w W", "save, save as"),
+                    ("O", "open in a new tab"),
+                    ("N", "new tab"),
+                    ("q Q X", "close, quit all, close saved"),
+                ],
+            ),
+            (
+                "view",
+                &[
+                    ("P", "toggle preview pane"),
+                    ("t", "theme picker"),
+                    ("ctrl+d/u", "scroll half a page"),
+                    ("page up/down", "scroll"),
+                    ("home end", "line start, end"),
+                ],
+            ),
+            (
+                "mouse",
+                &[
+                    ("click", "place cursor or pick a row"),
+                    ("drag", "select"),
+                    ("wheel", "scroll"),
+                ],
+            ),
         ];
         let rows: usize = groups.iter().map(|(_, items)| items.len() + 1).sum();
         let key_w = groups

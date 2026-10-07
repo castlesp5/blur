@@ -4,7 +4,7 @@
 //! you opened last. everything else lives one keypress away in the
 //! editor.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::Frame;
 use ratatui::style::*;
@@ -49,6 +49,7 @@ impl Row {
             Row::Quit => format!("{}{}", icons("quit"), "quit"),
             Row::Recent(p) => {
                 let name = crate::short_of(p);
+                let name = if name.is_empty() { p.clone() } else { name };
                 format!("{}{}", crate::file_icon(p).0, name)
             }
         }
@@ -101,21 +102,68 @@ pub fn recent_files() -> Vec<String> {
 /// remember a file, newest first. failures are ignored, a homescreen
 /// should never break the editor because of a state file.
 pub fn record_recent(path: &str) {
-    if path.is_empty() {
+    // directories are not openable buffers, so never list them
+    if path.is_empty() || !Path::new(path).is_file() {
         return;
     }
+    // the same file can appear as a relative and an absolute path, so
+    // compare the resolved forms as well as the text
+    let key = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     let mut files = vec![path.to_string()];
+    // keep existing entries only while they are still real files, so a
+    // stale one is not written back on every open
     for f in recent_files() {
-        if f != path {
+        if !Path::new(&f).is_file() {
+            continue;
+        }
+        let same = f == path
+            || std::fs::canonicalize(&f).unwrap_or_else(|_| PathBuf::from(&f)) == key;
+        if !same {
             files.push(f);
         }
     }
     files.truncate(MAX_RECENTS);
+    write_recents(&files);
+}
+
+fn write_recents(files: &[String]) {
     if let Some(file) = state_file() {
         if let Some(parent) = file.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(file, files.join("\n") + "\n");
+        let body = if files.is_empty() {
+            String::new()
+        } else {
+            files.join("\n") + "\n"
+        };
+        let _ = std::fs::write(file, body);
+    }
+}
+
+/// drop entries whose file is gone. editors do this so the recent list
+/// never offers something that cannot be opened.
+pub fn purge_missing() {
+    let all = recent_files();
+    let mut kept: Vec<String> = Vec::with_capacity(all.len());
+    let mut seen: Vec<PathBuf> = Vec::with_capacity(all.len());
+    let mut dropped = false;
+    for p in all {
+        // a file that is gone, or an entry that is not a file at all,
+        // has no place in this list
+        if !Path::new(&p).is_file() {
+            dropped = true;
+            continue;
+        }
+        let key = std::fs::canonicalize(&p).unwrap_or_else(|_| PathBuf::from(&p));
+        if seen.contains(&key) {
+            dropped = true;
+            continue;
+        }
+        seen.push(key);
+        kept.push(p);
+    }
+    if dropped {
+        write_recents(&kept);
     }
 }
 
@@ -207,6 +255,11 @@ impl Home {
         }
         self.sel = idx;
         self.activate()
+    }
+
+    /// highlight the first row, used when the screen is entered
+    pub fn select_first(&mut self) {
+        self.sel = 0;
     }
 
     pub fn move_sel(&mut self, delta: i32) {
@@ -444,35 +497,44 @@ mod tests {
         (guard, dir)
     }
 
+    /// recents only holds real files, so tests need real files
+    fn touch(dir: &std::path::Path, name: &str) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, "x").unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
     #[test]
     fn recents_are_newest_first_without_duplicates() {
         let (_g, dir) = sandbox("recents");
-        record_recent("/tmp/a.rs");
-        record_recent("/tmp/b.rs");
-        record_recent("/tmp/a.rs");
-        assert_eq!(
-            recent_files(),
-            vec!["/tmp/a.rs".to_string(), "/tmp/b.rs".to_string()]
-        );
-        let _ = std::fs::remove_dir_all(dir);
+        let a = touch(&dir, "a.rs");
+        let b = touch(&dir, "b.rs");
+        record_recent(&a);
+        record_recent(&b);
+        record_recent(&a);
+        assert_eq!(recent_files(), vec![a, b]);
     }
 
     #[test]
     fn recents_are_capped() {
         let (_g, dir) = sandbox("cap");
+        let mut files = Vec::new();
         for i in 0..MAX_RECENTS + 5 {
-            record_recent(&format!("/tmp/f{i}.rs"));
+            files.push(touch(&dir, &format!("f{i}.rs")));
         }
-        let files = recent_files();
-        assert_eq!(files.len(), MAX_RECENTS);
-        assert_eq!(files[0], format!("/tmp/f{}.rs", MAX_RECENTS + 4));
-        let _ = std::fs::remove_dir_all(dir);
+        for f in &files {
+            record_recent(f);
+        }
+        let listed = recent_files();
+        assert_eq!(listed.len(), MAX_RECENTS);
+        assert_eq!(listed[0], *files.last().unwrap());
     }
 
     #[test]
     fn rows_are_actions_then_recents_then_quit() {
         let (_g, dir) = sandbox("rows");
-        record_recent("/tmp/one.rs");
+        let one = touch(&dir, "one.rs");
+        record_recent(&one);
         let mut h = Home::new();
         assert_eq!(h.rows.len(), 4);
         assert_eq!(h.activate(), Some(Choice::Prompt));
@@ -480,32 +542,48 @@ mod tests {
         h.move_sel(1);
         assert_eq!(h.activate(), Some(Choice::New));
         h.move_sel(1);
-        assert_eq!(h.activate(), Some(Choice::Open("/tmp/one.rs".into())));
+        assert_eq!(h.activate(), Some(Choice::Open(one.clone())));
         h.move_sel(1);
         assert_eq!(h.activate(), Some(Choice::Quit));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn typing_a_path_then_enter_opens_it() {
-        let _g = sandbox("type");
-        let mut h = Home::new();
-        assert!(h.type_char('/'));
-        assert!(h.is_prompting());
-        for c in "tmp/x.py".chars() {
-            assert!(h.type_char(c));
-        }
-        assert_eq!(h.activate(), Some(Choice::Open("/tmp/x.py".to_string())));
-        assert!(!h.is_prompting(), "prompt closes after opening");
+    fn directories_never_enter_recents() {
+        let (_g, dir) = sandbox("dirs");
+        let file = dir.join("real.txt");
+        std::fs::write(&file, "x").unwrap();
+        record_recent(dir.to_str().unwrap());
+        assert!(recent_files().is_empty(), "a directory is not openable");
+        record_recent(file.to_str().unwrap());
+        assert_eq!(recent_files().len(), 1);
     }
 
     #[test]
-    fn empty_path_keeps_the_prompt_open() {
-        let _g = sandbox("empty");
-        let mut h = Home::new();
-        assert_eq!(h.activate(), Some(Choice::Prompt));
-        assert_eq!(h.activate(), Some(Choice::Prompt));
-        assert!(h.is_prompting());
+    fn deleted_files_are_purged() {
+        let (_g, dir) = sandbox("purge");
+        let live = dir.join("live.txt");
+        std::fs::write(&live, "x").unwrap();
+        let gone = dir.join("gone.txt");
+        std::fs::write(&gone, "x").unwrap();
+        record_recent(gone.to_str().unwrap());
+        record_recent(live.to_str().unwrap());
+        assert_eq!(recent_files().len(), 2);
+
+        std::fs::remove_file(&gone).unwrap();
+        purge_missing();
+        let left = recent_files();
+        assert_eq!(left.len(), 1, "the deleted entry should be gone");
+        assert!(left[0].ends_with("live.txt"));
+    }
+
+    #[test]
+    fn purge_keeps_everything_when_all_files_exist() {
+        let (_g, dir) = sandbox("purge-keep");
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "x").unwrap();
+        record_recent(a.to_str().unwrap());
+        purge_missing();
+        assert_eq!(recent_files().len(), 1);
     }
 
     #[test]

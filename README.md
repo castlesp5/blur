@@ -1,28 +1,21 @@
 # blur
 
-A modal terminal text editor in Rust. Vim-style keys, syntax highlighting, live markdown preview, and a transparent themed interface.
+a modal terminal text editor written in rust.
 
-Built on [ratatui](https://github.com/ratatui-org/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm), [syntect](https://github.com/trishume/syntect), and [opaline](https://crates.io/crates/opaline).
+vim-style keys, syntax highlighting, a live markdown preview, and a
+transparent interface. built on
+[ratatui](https://github.com/ratatui-org/ratatui),
+[crossterm](https://github.com/crossterm-rs/crossterm),
+[syntect](https://github.com/trishume/syntect), and
+[opaline](https://crates.io/crates/opaline).
 
-## Features
+## requirements
 
-- Modal editing: normal, insert, visual, and visual-line modes
-- Multiple tabs, each with its own undo history and viewport
-- Automatic language detection across file names, extensions, shebangs and content
-- Smart indentation, electric brackets, bracket-split enter, undo of each
-- Markdown preview pane with inline images
-- Keyboard help sheet on `?`
-- 39 built-in themes with live preview
-- Full mouse support
-- Bracketed paste
+- stable rust toolchain
+- a terminal with utf-8 and true color
+- a nerd font for icons ([nerdfonts.com](https://www.nerdfonts.com))
 
-## Requirements
-
-- Stable Rust toolchain
-- A terminal with UTF-8 and true color
-- A Nerd Font for icons ([nerdfonts.com](https://www.nerdfonts.com))
-
-## Build
+## build
 
 ```bash
 git clone https://github.com/programmersd21/blur_ide.git
@@ -30,103 +23,118 @@ cd blur_ide
 cargo build --release
 ```
 
-## Usage
+## usage
 
 ```bash
-./blur              # start screen
-./blur path/to/file # open a file directly
+blur              # start screen
+blur path/to/file # open a file directly
 ```
 
-## Start screen
+## start screen
 
-Launched with no arguments, blur opens on a start screen: the logo, `open file`, `new buffer`, `quit`, and the ten files you opened last.
+launched with no arguments, blur opens on a start screen: the logo,
+`open file`, `new buffer`, `quit`, and the files you opened last.
 
-| Keys | Action |
+| keys | action |
 | ---- | ------ |
-| `j` / `k`, arrows | Move |
-| `Enter` | Open the highlighted entry, or confirm the path |
-| `o` | Focus the path prompt |
-| any character | Start typing a path |
-| `n` | New buffer |
-| `q` / `Esc` | Quit |
-| Click | Activate an entry |
+| `j` / `k`, arrows | move |
+| `enter` | open the highlighted entry, or confirm the path |
+| `o` | focus the path prompt |
+| any character | start typing a path |
+| `n` | new buffer |
+| `q` / `esc` | quit |
+| click | activate an entry |
 
-The cursor stays hidden on the start screen and only appears while a path is being typed.
+the cursor is hidden on the start screen and only appears while a path
+is being typed. in normal mode, `h` comes back here without closing any
+open tabs.
 
-Recent files live in `$XDG_STATE_HOME/blur/recent`, or `$BLUR_STATE_DIR/recent` when that is set.
+recents live in `$XDG_STATE_HOME/blur/recent`, or `$BLUR_STATE_DIR/recent`
+when that is set. entries that are deleted, are not files, or resolve to
+the same file twice are dropped at startup.
 
-## Keys
+## normal mode
 
-### Normal mode
-
-| Keys | Action |
+| keys | action |
 | ---- | ------ |
-| `h j k l`, arrows | Move cursor |
-| `g` / `G` | First / last line |
-| `e` / `b` | Word forward / back |
-| `E` / `B` | End / start of line |
-| `i` / `a` / `o` | Insert, append, open line below |
-| `J` / `K` | Move line down / up |
-| `>` / `<` | Indent / unindent line |
-| `d` | Delete line |
-| `u` / `r` | Undo / redo |
-| `v` / `V` | Visual / visual-line mode |
-| `w` / `W` | Save / save as |
-| `O` | Open file in a new tab |
-| `N` | New empty tab |
-| `Tab` / `Shift+Tab` | Next / previous tab |
-| `?` | Keyboard help |
-| `t` | Theme picker |
-| `P` | Toggle markdown preview |
-| `X` | Close all saved tabs |
-| `q` | Close tab or quit |
-| `Q` | Quit everything |
+| `h j k l`, arrows | move cursor |
+| `g` / `G` | first line / last line |
+| `e` / `b` | word forward / back |
+| `E` / `B` | end / start of line |
+| `i` / `a` / `o` | insert, append, open line below |
+| `J` / `K` | move line down / up |
+| `>` / `<` | indent / unindent line |
+| `d` | delete line |
+| `u` / `r` | undo / redo |
+| `v` / `V` | visual / visual-line mode |
+| `w` / `W` | save / save as |
+| `O` | open file in a new tab |
+| `N` | new tab |
+| `Tab` / `Shift+Tab` | next / previous tab |
+| `?` | keyboard help |
+| `t` | theme picker |
+| `P` | toggle preview pane |
+| `X` | close all saved tabs |
+| `q` | close tab or quit |
+| `Q` | quit everything |
 
-### Insert mode
+## insert mode
 
-| Keys | Action |
+| keys | action |
 | ---- | ------ |
-| `Enter` | Split line with matching indent |
-| `Tab` / `Shift+Tab` | Indent / unindent |
-| `}` `)` `]` | Dedent when on blank indentation |
-| `Backspace` | Delete before cursor, or merge lines |
-| `Esc` | Back to normal mode |
+| text | insert at cursor |
+| `enter` | split line, carrying indentation |
+| `tab` / `shift+tab` | indent / unindent |
+| `}` `)` `]` | dedent when on blank indentation |
+| `backspace` | delete before cursor, or merge lines |
+| `delete` | delete under cursor, or remove empty line |
+| `esc` | back to normal mode |
 
-### Scrolling
+## scrolling
 
-| Keys | Action |
+| keys | action |
 | ---- | ------ |
-| Wheel / trackpad | Scroll, the cursor rides along |
-| `Shift` + wheel | Scroll sideways |
-| `PageDown` / `PageUp` | Half page |
-| `Ctrl+D` / `Ctrl+U` | Half page |
-| `Ctrl+F` / `Ctrl+B` | Full page |
-| `Home` / `End` | Start / end of line |
+| wheel | scroll, the cursor rides along |
+| `shift` + wheel | scroll sideways |
+| `page down` / `page up` | half page |
+| `ctrl+d` / `ctrl+u` | half page |
+| `ctrl+f` / `ctrl+b` | full page |
+| `home` / `end` | start / end of line |
 
-Scrolling moves the window and the cursor together, so the view never snaps back to the cursor.
+scrolling moves the window and the cursor together, so the view never
+snaps back to the cursor.
 
-### Other
+## theme picker
 
-| Keys | Action |
+`j` / `k` or arrows move with live preview, `enter` keeps the theme, `esc`
+restores the previous one. each row shows three accent dots sampled from
+the theme.
+
+## other prompts
+
+| keys | action |
 | ---- | ------ |
-| `j` / `k`, arrows | Theme picker navigation |
-| `Enter` | Apply theme |
-| `Esc` | Restore previous theme |
-| Any key | Close the help sheet |
+| `enter` | confirm a save or open path |
+| `esc` | cancel |
+| any key | close the help sheet |
 
-## Help
+a failed save or open keeps the buffer and the typed path, so a retry
+costs nothing.
 
-Press `?` in Normal mode for a keyboard sheet covering editing, files, view, and mouse. Any key closes it.
+## help
 
-## Mouse
+press `?` in normal mode for a sheet covering editing, files, view, and
+mouse. any key closes it.
 
-- Click to place the cursor, drag to select
-- Click a tab to switch, click its `×` or middle-click it to close
-- Click a theme row to apply
-- Click the left half of the confirm dialog to quit
-- Wheel or trackpad scroll, with the cursor riding along
+## mouse
 
-## Configuration
+- click to place the cursor, drag to select
+- click a tab to switch, click its `×` or middle-click it to close
+- click a theme row to apply
+- click the left half of the confirm dialog to quit
+- wheel or trackpad scroll, with the cursor riding along
+
+## configuration
 
 `$XDG_CONFIG_HOME/blur/config.toml`:
 
@@ -135,43 +143,62 @@ theme = "catppuccin-mocha"
 images = true
 ```
 
-`images` is optional. Left unset, blur decides from the terminal.
+`images` is optional. left unset, blur decides from the terminal.
 
-Written when a theme is applied, read at startup. Unknown keys are ignored.
+## markdown preview
 
-Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because guessing terminal support wrong prints raw escape text on screen.
+press `P` with a markdown file open. the preview re-renders on every edit
+and scrolls with the editor. headings, lists, quotes, code, and links
+render in theme colors.
 
-## Markdown preview
+images display through the kitty graphics protocol on kitty, wezterm,
+and ghostty. detection reads environment signals rather than querying the
+terminal, because the query protocol leaves a background reader on stdin
+when a terminal does not answer, which swallows keystrokes.
 
-Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type.
+other terminals get a clean `[alt] path` placeholder instead of raw
+escape codes. set `images = true` to force images on, which is what you
+want inside tmux or screen with `allow-passthrough` configured.
+`images = false` turns them off. image support is prepared behind a short
+deadline, so a slow or stalled multiplexer can never delay startup.
 
-Images display inline through the kitty graphics protocol on kitty, WezTerm, and ghostty. Detection reads environment signals rather than querying the terminal, because the query protocol leaves a background reader on stdin when a terminal does not answer, which swallows your keystrokes.
+drop any `.sublime-syntax` or `.tmLanguage` file into
+`$XDG_CONFIG_HOME/blur/syntaxes` and it loads at startup.
 
-Every other terminal gets a clean `[alt] path` placeholder instead of raw escape codes. Set `images = true` in the config to force images on, which is what you want inside tmux or screen with `allow-passthrough` configured. `images = false` turns them off.
+## syntax highlighting
 
-Image support is prepared behind a short deadline, so a slow or stalled terminal multiplexer can never delay or block startup.
+detection runs in layers, so it works for named files, unsaved buffers,
+and scripts with no extension:
 
-## Syntax highlighting
+1. whole file names, such as `Makefile`, `Dockerfile`, `Rakefile`,
+   `Cargo.toml`, `.bashrc`, and `CMakeLists.txt`
+2. path and extension, including compound suffixes like `.d.ts`
+3. shebangs, with flags handled, so `#!/usr/bin/env -S deno run` resolves
+4. first-line signatures such as `<?php`
+5. weighted content scoring over the buffer, for untitled files
 
-Highlighting uses `syntect` with the `catppuccin-mocha` theme. Lines are fed to the parser with their terminator, so comment and string scopes close correctly at the end of a line. Detection runs in layers, so it works for named files, unsaved buffers, and scripts with no extension:
+languages with no bundled grammar borrow the closest one and keep their
+own name in the status bar: typescript and jsx highlight as javascript,
+kotlin and dart as java, elixir as erlang, julia as matlab, scss and less
+as css, terraform as yaml, protobuf as c++, powershell as shell, vue and
+svelte as html. anything genuinely unrelated stays plain text rather than
+being colored wrongly.
 
-1. Whole file names: `Makefile`, `Dockerfile`, `Rakefile`, `Cargo.toml`, `.bashrc`, `CMakeLists.txt`, and similar.
-2. Path and extension, including compound suffixes such as `.blade.php` and `.d.ts`.
-3. Shebangs, with flags handled, so `#!/usr/bin/env -S deno run` resolves correctly.
-4. First-line signatures such as `<?php` and `<?xml`.
-5. Weighted content scoring over the buffer, for untitled files.
+ambiguous extensions resolve from the file body: `.h` is c++ with `class`
+or `namespace`, objective-c with `@interface`, otherwise c. `.m` is matlab
+with `function`, otherwise objective-c.
 
-Languages with no bundled grammar borrow the closest one and keep their own name in the status bar: TypeScript and JSX highlight as JavaScript, Kotlin and Dart as Java, Elixir as Erlang, Julia as MATLAB, SCSS and Less as CSS, TOML and INI as YAML-style config, Terraform as YAML, Protobuf as C++, PowerShell as shell, Vue and Svelte as HTML, Zig as C, Crystal as Ruby, Nim as Python, Swift as C++. Anything genuinely unrelated stays plain text rather than being colored wrongly.
+markdown gets a dedicated pass, since converter themes carry no markup
+scopes. headings, emphasis, code, links, lists, and fenced blocks
+highlight in the editor with no background fills.
 
-Ambiguous extensions are resolved from the file body: a `.h` with `class` or `namespace` is C++, one with `@interface` is Objective-C, and otherwise it is C. A `.m` containing `function` is MATLAB, otherwise Objective-C.
+## undo
 
-Drop any `.sublime-syntax` or `.tmLanguage` file into `$XDG_CONFIG_HOME/blur/syntaxes` and it is loaded at startup for exact grammars.
+every edit records an exact inverse, including indentation, line splits,
+merges, and bracket splits. history is per tab. any new edit clears the
+redo stack.
 
-## Undo
-
-Every edit records an exact inverse, including indentation, line splits, merges, and bracket splits. History is per tab.
-
-## Structure
+## structure
 
 ```text
 src/
@@ -181,20 +208,22 @@ src/
   modes.rs         insert mode, prompts, paste, indentation
   select_modes.rs  visual modes
   helpers.rs       buffer state, highlighting, undo records
-  preview.rs       markdown parsing and image protocol
+  home.rs          start screen and recents
+  media.rs         terminal image support
+  preview.rs       markdown parsing
 ```
 
-## Limitations
+## limitations
 
-- Visual mode is single-line
-- No search or replace
-- Tables render as raw text
+- visual mode is single line
+- no search or replace
+- tables render as raw text
 
-## License
+## license
 
-Dual-licensed under MIT or Apache-2.0.
+dual-licensed under mit or apache-2.0.
 
-## Credits
+## credits
 
 - [programmersd21](https://github.com/programmersd21)
 - [castlesp5](https://github.com/castlesp5), original author
