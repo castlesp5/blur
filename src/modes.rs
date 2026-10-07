@@ -263,7 +263,8 @@ pub fn insert_paste(tab: &mut Tab, text: &str) {
 }
 
 pub fn open_mode(
-    tab: &mut Tab,
+    tabs: &mut Vec<Tab>,
+    tab_selector: &mut usize,
     event_key: crossterm::event::KeyEvent,
     the_command_line: &mut String,
     mode: &mut i32,
@@ -276,26 +277,22 @@ pub fn open_mode(
             the_command_line.pop();
         }
         crossterm::event::KeyCode::Enter => {
-            match std::fs::read_to_string(&the_command_line) {
-                Ok(content) => {
-                    tab.undo_stack.clear();
-                    tab.redo_stack.clear();
-                    tab.input_box = content.split('\n').map(|s| s.to_string()).collect();
-                    tab.saved = true;
-                    tab.highlight_cache = None;
-                    tab.cursor_x = 0;
-                    tab.cursor_y = 0;
-                    tab.scroll_x = 0;
-                    tab.scroll_y = 0;
-                    tab.file_name = the_command_line.clone();
-                    the_command_line.clear();
-                    *mode = 0;
-                }
-                Err(_) => {
-                    // keep the current buffer untouched so a typo costs nothing
-                    return Ok(false);
-                }
-            }
+            // opens into a fresh tab so the current buffer survives,
+            // and a failed read leaves every existing tab untouched
+            let path = the_command_line.clone();
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => return Ok(false),
+            };
+            let mut new_tab = Tab::new();
+            new_tab.input_box = content.split('\n').map(str::to_string).collect();
+            new_tab.file_name = path;
+            new_tab.saved = true;
+            new_tab.highlight_cache = None;
+            tabs.push(new_tab);
+            *tab_selector = tabs.len() - 1;
+            the_command_line.clear();
+            *mode = 0;
         }
         crossterm::event::KeyCode::Esc => {
             the_command_line.clear();

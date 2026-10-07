@@ -446,8 +446,14 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         }
                     }
                     11 => {
-                        if !modes::open_mode(tab, *event_key, &mut the_command_line, &mut mode)
-                            .unwrap()
+                        if !modes::open_mode(
+                            &mut tabs,
+                            &mut tab_selector,
+                            *event_key,
+                            &mut the_command_line,
+                            &mut mode,
+                        )
+                        .unwrap()
                         {
                             mode = 401;
                         }
@@ -1211,7 +1217,7 @@ fn renderer(
     let micon = mode_icon(mode);
     let (fgly, _) = file_icon(&tab.file_name);
     let mauve: Color = hue(theme, "mauve").into();
-    let brand = " blur 0.10 ";
+    let brand = " blur 1.1 ";
     let pos = format!("{}:{}", tab.cursor_y + 1, visual_x + 1);
     let pill_label = format!("{}{}", micon, label.trim());
     let pill_w = UnicodeWidthStr::width(pill_label.as_str()) + 2;

@@ -1,249 +1,135 @@
-# blur 0.10
+# blur
 
-A fast, modal terminal text editor written in Rust. Vim-inspired keybindings, automatic syntax highlighting, and a transparent Catppuccin Mocha interface built on [ratatui](https://github.com/ratatui-org/ratatui) and [crossterm](https://github.com/crossterm-rs/crossterm).
+A modal terminal text editor in Rust. Vim-style keys, syntax highlighting, live markdown preview, and a transparent themed interface.
+
+Built on [ratatui](https://github.com/ratatui-org/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm), [syntect](https://github.com/trishume/syntect), and [opaline](https://crates.io/crates/opaline).
 
 ## Features
 
-- Modal editing: Normal, Insert, Select, and Select-Line modes
-- Multiple tabs with per-tab undo history and viewport
-- Automatic language detection: file path, shebang, and content sniffing via `syntect`
-- Auto-indentation on Enter, with opener-aware extra indent
-- Fine-grained undo/redo across inserts, deletes, splits, merges, indents, and line moves
-- Bracketed paste support in Insert mode and in save/open prompts
-- Prompt-driven save, save-as, and open with retry on failure
-- Unsaved-work confirmation across all open tabs
-- Transparent UI: rounded mode-colored frame, pill tab bar and statusline, Nerd Font icons
-- Theme picker (`t`): all 39 built-in opaline themes with live preview and accent dots
-- IDE-grade indentation: opener-aware indent, electric closers, bracket-split Enter
+- Modal editing: normal, insert, visual, and visual-line modes
+- Multiple tabs, each with its own undo history and viewport
+- Automatic language detection, including shebangs and untitled buffers
+- Smart indentation, electric brackets, bracket-split enter, undo of each
+- Markdown preview pane with inline images
+- 39 built-in themes with live preview
+- Full mouse support
+- Bracketed paste
 
 ## Requirements
 
-- Stable Rust toolchain ([install](https://www.rust-lang.org/tools/install))
-- A terminal with UTF-8 and true-color support
-- A Nerd Font for file and mode icons ([nerdfonts.com](https://www.nerdfonts.com))
+- Stable Rust toolchain
+- A terminal with UTF-8 and true color
+- A Nerd Font for icons ([nerdfonts.com](https://www.nerdfonts.com))
 
-## Install
-
-Build from source:
+## Build
 
 ```bash
-git clone git@github.com:castlesp5/blur.git
-cd blur
+git clone https://github.com/programmersd21/blur_ide.git
+cd blur_ide
 cargo build --release
 ```
 
-The binary is produced at `target/release/blur`. Run `cargo clippy --all-targets` for lint checks.
-
 ## Usage
 
-Open an empty buffer:
-
 ```bash
-./blur
+./blur              # empty buffer
+./blur path/to/file # open a file in a new tab
 ```
 
-Open a file:
-
-```bash
-./blur path/to/file.rs
-```
-
-If the file does not exist, blur starts with an empty buffer bound to that path. Press `w` to write it.
-
-## Keybindings
+## Keys
 
 ### Normal mode
 
 | Keys | Action |
 | ---- | ------ |
 | `h j k l`, arrows | Move cursor |
-| `g` / `G` | First line / last line |
-| `e` / `b` | Next word / previous word |
-| `E` / `B` | End of line / start of line |
-| `i` / `a` | Insert at cursor / after cursor |
-| `o` | New line below, enter Insert mode |
-| `J` / `K` | Move current line down / up |
-| `>` / `<` | Indent / unindent current line |
-| `d` | Delete current line |
+| `g` / `G` | First / last line |
+| `e` / `b` | Word forward / back |
+| `E` / `B` | End / start of line |
+| `i` / `a` / `o` | Insert, append, open line below |
+| `J` / `K` | Move line down / up |
+| `>` / `<` | Indent / unindent line |
+| `d` | Delete line |
 | `u` / `r` | Undo / redo |
-| `v` / `V` | Select mode / Select-Line mode |
-| `w` | Save (prompts for a path when unnamed) |
-| `W` | Save as (always prompts) |
-| `O` | Open file (prompts) |
+| `v` / `V` | Visual / visual-line mode |
+| `w` / `W` | Save / save as |
+| `O` | Open file in a new tab |
 | `N` | New empty tab |
-| `Tab` / `n`, `Shift+Tab` | Next / previous tab |
-| `Delete` / `Backspace` | Delete under / before cursor |
-| `q` | Close tab or quit (confirms when any tab is unsaved) |
-| `Q` | Quit all tabs (confirms when anything is unsaved) |
+| `Tab` / `Shift+Tab` | Next / previous tab |
+| `t` | Theme picker |
+| `P` | Toggle markdown preview |
 | `X` | Close all saved tabs |
-| `t` | Theme picker (live preview, `Enter` applies, `Esc` restores) |
-| `P` | Toggle readme preview pane (markdown files) |
+| `q` | Close tab or quit |
+| `Q` | Quit everything |
 
 ### Insert mode
 
 | Keys | Action |
 | ---- | ------ |
-| Text | Insert at cursor |
-| `Enter` | Split line, carrying indentation (between brackets opens an indented middle line) |
-| `Tab` | Insert 4 spaces |
-| `Shift+Tab` | Remove one indent level |
-| `}` `)` `]` | Electric dedent when typed on blank indentation |
-| `Backspace` | Delete before cursor, or merge with previous line |
-| `Delete` | Delete under cursor, or remove empty line |
-| Arrows | Move without leaving Insert mode |
-| `Esc` | Back to Normal mode |
+| `Enter` | Split line with matching indent |
+| `Tab` / `Shift+Tab` | Indent / unindent |
+| `}` `)` `]` | Dedent when on blank indentation |
+| `Backspace` | Delete before cursor, or merge lines |
+| `Esc` | Back to normal mode |
 
-Typed runs are batched into one undo step.
-
-### Select mode (`v`)
-
-Single-line selection anchored where `v` was pressed.
+### Other
 
 | Keys | Action |
 | ---- | ------ |
-| Movement keys | Extend selection |
-| `>` / `<` | Indent / unindent line, back to Normal mode |
-| `d` | Delete selection, back to Normal mode |
-| `Esc` | Cancel |
-
-### Select-Line mode (`V`)
-
-Whole-line selection between the anchor and the cursor.
-
-| Keys | Action |
-| ---- | ------ |
-| `g` / `G` | Extend to first / last line |
-| `J` / `K` | Move selected block down / up |
-| `>` / `<` | Indent / unindent selected lines |
-| `d` | Delete selected lines, back to Normal mode |
-| `Esc` | Cancel |
-
-### Save, open, and error prompts
-
-| Keys | Action |
-| ---- | ------ |
-| Text | Edit the file path |
-| `Backspace` | Delete last character |
-| `Enter` | Confirm |
-| `Esc` | Cancel |
-
-A failed save or open keeps the buffer and the typed path. Any key returns to the prompt for a retry.
-
-### Unsaved-work prompt
-
-Shown when quitting with unsaved changes in any tab.
-
-| Keys | Action |
-| ---- | ------ |
-| `y` | Discard and close |
-| Any other key | Cancel |
-
-## Tabs
-
-Tabs show file icons, numbers, and dirty dots. Duplicate file names gain parent-path context until unique, long names shorten in the middle, and the bar scrolls with `‹` `›` markers to keep the active tab visible.
-
-## Themes
-
-Press `t` in Normal mode for the theme picker: `j`/`k` or arrows move with live preview, `Enter` keeps the theme, `Esc` restores the previous one. Each row shows three accent dots sampled from the theme. No configuration or network involved.
-
-## Configuration
-
-Settings persist in `$XDG_CONFIG_HOME/blur/config.toml` (or `~/.config/blur/config.toml`):
-
-```toml
-theme = "dracula"
-```
-
-The file is written whenever a theme is applied and read at startup. Unknown theme names fall back to `catppuccin-mocha`. Only `theme` is stored for now.
-
-## Preview pane
-
-Press `P` in Normal mode while editing markdown to open a live side-by-side preview. It re-renders on every edit and scrolls in sync with the editor. Headings, lists, quotes, code fences, links, and inline marks render in theme colors. Markdown files also get real syntax highlighting in the editor itself.
-
-Images (`![alt](path)` and `<img src="...">`) display inline over the kitty graphics protocol on kitty, WezTerm, and ghostty, including nested tmux sessions. Relative paths resolve from the file's directory; absolute and `~/` paths work too. A text placeholder always renders underneath, so plain terminals and missing files stay readable. Press `P` again to close.
+| `j` / `k`, arrows | Theme picker navigation |
+| `Enter` | Apply theme |
+| `Esc` | Restore previous theme |
 
 ## Mouse
 
-Mouse capture is enabled for the whole app:
+- Click to place the cursor, drag to select
+- Click a tab to switch, click a theme row to apply
+- Click the left half of the confirm dialog to quit
+- Scroll to scroll either pane
 
-- click in the editor to place the cursor, drag to select
-- click a tab pill to switch tabs
-- click a theme row to apply it immediately
-- click the left half of the confirm modal to quit, anywhere else to cancel
-- scroll over the editor or preview to scroll
+## Configuration
 
-## Undo and redo
+`$XDG_CONFIG_HOME/blur/config.toml`:
 
-Every edit is recorded as an `EditRecord` with an exact inverse. `u` applies the inverse, `r` re-applies it. Any new edit clears the redo stack. Undo history is per tab.
+```toml
+theme = "catppuccin-mocha"
+```
 
-## Syntax highlighting
+Written when a theme is applied, read at startup.
 
-Highlighting uses `syntect` with the `catppuccin-mocha` theme loaded through `opaline`:
+## Markdown preview
 
-1. File path lookup (extension and file name).
-2. Shebang and first-line detection (works for untitled buffers).
-3. Content sniffing for common constructs.
-4. Plain text fallback.
+Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type. Images display on kitty, WezTerm, and ghostty through the kitty graphics protocol; other terminals show text placeholders.
 
-Markdown gets a dedicated pass because converter themes carry no markup scopes: headings, emphasis, code, links, lists, and fenced blocks highlight in the editor with zero background fills.
+## Undo
 
-Results are cached per tab and invalidated on every edit, undo, and redo. Statusline contrast is derived at runtime from WCAG relative luminance.
+Every edit records an exact inverse, including indentation, line splits, merges, and bracket splits. History is per tab.
 
-## Project structure
+## Structure
 
 ```text
 src/
-  main.rs          Entry point, event loop, renderer
-  controls.rs      Cursor movement primitives (arrows, hjkl)
-  normal_mode.rs   Normal-mode commands
-  modes.rs         Insert mode, save/open prompts, paste, auto-indent
-  select_modes.rs  Select and Select-Line handling
-  helpers.rs       Tab, Visual, Highlighter, EditRecord, undo/redo
+  main.rs          event loop and renderer
+  controls.rs      cursor movement
+  normal_mode.rs   normal mode commands
+  modes.rs         insert mode, prompts, paste, indentation
+  select_modes.rs  visual modes
+  helpers.rs       buffer state, highlighting, undo records
+  preview.rs       markdown parsing and image protocol
 ```
 
-## Architecture
+## Limitations
 
-- `main.rs` owns the tab list, the active index, and a numeric mode state machine. Each key event is dispatched to the handler for the current mode.
-- `Tab` holds buffer lines, cursor, scroll offsets, saved flag, highlight cache, and independent undo/redo stacks.
-- `Visual` holds the selection anchor for Select modes.
-- `apply_inverse` and `apply_forward` in `helpers.rs` are the single implementation of every reversible operation.
-- `renderer()` draws the tab bar, the framed viewport with gutter and scrollbar, and the statusline, then places the terminal cursor exactly, including inside prompts.
-
-## Known limitations
-
-- Select mode (`v`) is limited to a single line.
-- Word motions are space-delimited and do not implement full Vim word objects.
-- No search/replace or split panes yet.
-
-## Roadmap
-
-- [ ] Search and search-and-replace
-- [ ] Multi-line character-wise selection
-- [ ] Configurable keybindings and theme selection
-- [ ] Split panes
-- [ ] Config file support (for example `~/.config/blur/config.toml`)
-
-## Contributing
-
-Issues and pull requests are welcome.
-
-1. Add an `EditRecord` variant with `apply_forward`/`apply_inverse` handling for any undoable change.
-2. Keep mode logic in its module rather than in `main.rs`.
-3. Update the keybinding tables above.
-4. Keep `cargo clippy --all-targets` warning-free.
+- Visual mode is single-line
+- No search or replace
+- Tables render as raw text
 
 ## License
 
-Dual-licensed under either of:
+Dual-licensed under MIT or Apache-2.0.
 
-- MIT License
-- Apache License, Version 2.0
+## Credits
 
-## Author
-
-Ismael Boujdad ([github.com/castlesp5](https://github.com/castlesp5))
-
-### Credits
-
-- Artem Tsitronov ([github.com/artemtsitronov](https://github.com/artemtsitronov))
-- Soumalya Das ([github.com/programmersd21](https://github.com/programmersd21))
+- [programmersd21](https://github.com/programmersd21)
+- [castlesp5](https://github.com/castlesp5), original author
+- [artemtsitronov](https://github.com/artemtsitronov)
