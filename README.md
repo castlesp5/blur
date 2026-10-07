@@ -8,7 +8,7 @@ Built on [ratatui](https://github.com/ratatui-org/ratatui), [crossterm](https://
 
 - Modal editing: normal, insert, visual, and visual-line modes
 - Multiple tabs, each with its own undo history and viewport
-- Automatic language detection, including shebangs and untitled buffers
+- Automatic language detection across file names, extensions, shebangs and content
 - Smart indentation, electric brackets, bracket-split enter, undo of each
 - Markdown preview pane with inline images
 - 39 built-in themes with live preview
@@ -106,6 +106,22 @@ Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because gues
 Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type.
 
 Images display through the kitty graphics protocol on kitty, WezTerm, and ghostty. Under tmux and screen they are disabled by default, because those multiplexers print passthrough sequences as plain text unless passthrough is enabled. Set `BLUR_KITTY=1` to force images on if your multiplexer is configured for it. Everywhere else, images render as text placeholders.
+
+## Syntax highlighting
+
+Highlighting uses `syntect` with the `catppuccin-mocha` theme. Detection runs in layers, so it works for named files, unsaved buffers, and scripts with no extension:
+
+1. Whole file names: `Makefile`, `Dockerfile`, `Rakefile`, `Cargo.toml`, `.bashrc`, `CMakeLists.txt`, and similar.
+2. Path and extension, including compound suffixes such as `.blade.php` and `.d.ts`.
+3. Shebangs, with flags handled, so `#!/usr/bin/env -S deno run` resolves correctly.
+4. First-line signatures such as `<?php` and `<?xml`.
+5. Weighted content scoring over the buffer, for untitled files.
+
+Languages with no bundled grammar borrow the closest one and keep their own name in the status bar: TypeScript and JSX highlight as JavaScript, Kotlin and Dart as Java, Elixir as Erlang, Julia as MATLAB, SCSS and Less as CSS, TOML and INI as YAML-style config, Terraform as YAML, Protobuf as C++, PowerShell as shell, Vue and Svelte as HTML, Zig as C, Crystal as Ruby, Nim as Python, Swift as C++. Anything genuinely unrelated stays plain text rather than being colored wrongly.
+
+Ambiguous extensions are resolved from the file body: a `.h` with `class` or `namespace` is C++, one with `@interface` is Objective-C, and otherwise it is C. A `.m` containing `function` is MATLAB, otherwise Objective-C.
+
+Drop any `.sublime-syntax` or `.tmLanguage` file into `$XDG_CONFIG_HOME/blur/syntaxes` and it is loaded at startup for exact grammars.
 
 ## Undo
 

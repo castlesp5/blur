@@ -49,6 +49,19 @@ fn resolve_media_path(path: &str, dir: &str) -> String {
     format!("{dir}/{path}")
 }
 
+fn load_theme_robust(name: &str) -> Option<opaline::Theme> {
+    if let Some(t) = opaline::load_by_name(name) {
+        return Some(t);
+    }
+    for item in opaline::list_available_themes() {
+        if (item.name.eq_ignore_ascii_case(name) || item.display_name.eq_ignore_ascii_case(name))
+            && let Some(t) = opaline::load_by_name(&item.name) {
+                return Some(t);
+            }
+    }
+    None
+}
+
 /// returns false when the theme fails to load, so callers can
 /// retry or stay put instead of silently keeping a half state.
 fn apply_theme(
@@ -57,7 +70,7 @@ fn apply_theme(
     tabs: &mut [Tab],
     name: &str,
 ) -> bool {
-    if let Some(t) = opaline::load_by_name(name) {
+    if let Some(t) = load_theme_robust(name) {
         *theme = t;
         highlighter.set_theme(theme);
         for tab in tabs.iter_mut() {
@@ -74,7 +87,7 @@ fn fill_dots(menu: &mut ThemeMenu) {
         if menu.dots[i].is_some() {
             continue;
         }
-        menu.dots[i] = opaline::load_by_name(name).and_then(|t| {
+        menu.dots[i] = load_theme_robust(name).and_then(|t| {
             let c = |k: &str| t.try_color(k).map(|c| (c.r, c.g, c.b));
             Some([
                 c("accent.primary")?,
@@ -1341,7 +1354,9 @@ fn renderer(
                 .iter()
                 .flat_map(|l| l.split_whitespace())
                 .count();
-            (format!("{}L · {}W · {}", total, words, theme_name), muted)
+            // detected language, the same engine that colors the buffer
+            let lang = highlighter.language(tab);
+            (format!("{lang} · {total}L · {words}W"), muted)
         }
     };
     // icons everywhere, rainbow file color, branding bottom right
