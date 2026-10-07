@@ -18,10 +18,9 @@ use select_modes::{select_mode_line, select_mode1};
 use unicode_width::UnicodeWidthStr;
 
 fn main() -> std::io::Result<()> {
-    // image support is probed before the tui starts, see media::probe
+    // image support is decided up front, see media::picker
     let (_, images) = load_config();
-    let picker = media::probe(images);
-    ratatui::run(|terminal| app(terminal, picker))
+    ratatui::run(|terminal| app(terminal, media::picker(media::Images::from_config(images))))
 }
 
 /// theme picker state: live list of every opaline theme plus a
@@ -118,9 +117,9 @@ fn config_path() -> Option<std::path::PathBuf> {
 
 /// tiny reader for the flat config file. unknown keys and bad values
 /// are ignored rather than fatal, so a typo never breaks startup.
-fn load_config() -> (Option<String>, bool) {
+fn load_config() -> (Option<String>, Option<bool>) {
     let mut theme = None;
-    let mut images = true;
+    let mut images = None;
     let text = match config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
         Some(t) => t,
         None => return (None, images),
@@ -141,7 +140,7 @@ fn load_config() -> (Option<String>, bool) {
                 }
             }
             "images" => {
-                images = matches!(value, "1" | "true" | "on");
+                images = Some(matches!(value, "1" | "true" | "on"));
             }
             _ => {}
         }
@@ -1470,7 +1469,10 @@ fn renderer(
                             slice.push(Line::from(vec![
                                 Span::styled(" [", Style::default().fg(dim).bg(base)),
                                 Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
-                                Span::styled(format!("] {}", path), Style::default().fg(dim).bg(base)),
+                                Span::styled(
+                                    format!("] {}", path),
+                                    Style::default().fg(dim).bg(base),
+                                ),
                             ]));
                         } else {
                             slice.push(Line::from(""));
@@ -1482,9 +1484,10 @@ fn renderer(
                                 start,
                                 *rows_needed as usize,
                                 view_h,
-                            ) {
-                                draws.push((full.clone(), rect));
-                            }
+                            )
+                        {
+                            draws.push((full.clone(), rect));
+                        }
                         for _ in 1..height.min(view_h) {
                             slice.push(Line::from(""));
                         }

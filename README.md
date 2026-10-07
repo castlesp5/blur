@@ -128,6 +128,8 @@ theme = "catppuccin-mocha"
 images = true
 ```
 
+`images` is optional. Left unset, blur decides from the terminal.
+
 Written when a theme is applied, read at startup. Unknown keys are ignored.
 
 Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because guessing terminal support wrong prints raw escape text on screen.
@@ -136,9 +138,9 @@ Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because gues
 
 Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type.
 
-Images display inline through the kitty graphics protocol. On startup blur asks the terminal what it supports instead of guessing, so kitty, WezTerm, and ghostty get real images, and anything else gets a clean text placeholder instead of raw escape codes. Set `images = false` in the config to turn them off.
+Images display inline through the kitty graphics protocol on kitty, WezTerm, and ghostty. Detection reads environment signals rather than querying the terminal, because the query protocol leaves a background reader on stdin when a terminal does not answer, which swallows your keystrokes.
 
-Inside tmux and screen the outer terminal is usually not visible, so blur skips the query there and shows placeholders.
+Every other terminal gets a clean `[alt] path` placeholder instead of raw escape codes. Set `images = true` in the config to force images on, which is what you want inside tmux or screen with `allow-passthrough` configured. `images = false` turns them off.
 
 ## Syntax highlighting
 

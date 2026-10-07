@@ -11,6 +11,7 @@ use std::path::Path;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 pub use ratatui_image::picker::Picker;
+use ratatui_image::picker::ProtocolType;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 
@@ -26,38 +27,67 @@ pub struct Media {
     cache: HashMap<String, (StatefulProtocol, (u32, u32))>,
 }
 
-/// ask the terminal what it can do. this must happen before the tui
-/// starts: the query reads stdin on a helper thread that toggles raw
-/// mode, which would fight ratatui if it ran mid session.
-pub fn probe(enabled: bool) -> Option<Picker> {
-    if !enabled || !plausible() {
-        return None;
-    }
-    use ratatui_image::picker::cap_parser::QueryStdioOptions;
-    let options = QueryStdioOptions {
-        timeout: std::time::Duration::from_millis(300),
-        ..Default::default()
-    };
-    Picker::from_query_stdio_with_options(options).ok()
+/// what the user asked for. `images` is tri state so an explicit
+/// `images = true` can force images on inside a multiplexer.
+pub struct Images {
+    pub requested: Option<bool>,
 }
 
-/// only probe terminals we know answer fast. a guess that is wrong costs
-/// a stalled startup, and inside a multiplexer the outer terminal is
-/// often not the one we can see.
-fn plausible() -> bool {
-    if std::env::var_os("KITTY_WINDOW_ID").is_some() {
-        return true;
+impl Images {
+    pub fn from_config(value: Option<bool>) -> Self {
+        Self { requested: value }
     }
-    if matches!(
-        std::env::var("TERM_PROGRAM").as_deref(),
-        Ok("WezTerm") | Ok("ghostty")
-    ) {
+}
+
+/// build a picker when the terminal is one we can trust to speak the
+/// kitty graphics protocol.
+///
+/// deliberately no capability query. `Picker::from_query_stdio` reads
+/// stdin on a thread that outlives its timeout, and when the terminal
+/// never answers that thread swallows every keystroke and the editor
+/// looks frozen. env signals cost us nothing and cannot hang.
+pub fn picker(images: Images) -> Option<Picker> {
+    match images.requested {
+        // off means off, whatever the environment claims
+        Some(false) => None,
+        // on means trust the user, they configured passthrough if needed
+        Some(true) => Some(kitty_picker()),
+        None => {
+            if in_multiplexer() {
+                // the outer terminal is invisible to us, and asking for
+                // passthrough that is not there prints escape garbage
+                None
+            } else if trusted_terminal() {
+                Some(kitty_picker())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn kitty_picker() -> Picker {
+    let mut p = Picker::halfblocks();
+    p.set_protocol_type(ProtocolType::Kitty);
+    p
+}
+
+fn in_multiplexer() -> bool {
+    std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some()
+}
+
+/// terminals that advertise themselves reliably enough to trust
+fn trusted_terminal() -> bool {
+    if std::env::var_os("KITTY_WINDOW_ID").is_some() || std::env::var_os("KITTY_PID").is_some() {
         return true;
     }
     if std::env::var("TERM").unwrap_or_default().contains("kitty") {
         return true;
     }
-    !std::env::var_os("TMUX").is_some() && !std::env::var_os("STY").is_some()
+    matches!(
+        std::env::var("TERM_PROGRAM").as_deref(),
+        Ok("WezTerm") | Ok("ghostty") | Ok("rio")
+    )
 }
 
 impl Media {
@@ -138,7 +168,12 @@ pub fn preview_rect(
     if rows == 0 {
         return None;
     }
-    Some(Rect::new(pane.x, pane.y + (row - start) as u16, pane.width, rows))
+    Some(Rect::new(
+        pane.x,
+        pane.y + (row - start) as u16,
+        pane.width,
+        rows,
+    ))
 }
 
 /// drop the image cache, used when a document is saved under a new name
@@ -198,8 +233,21 @@ mod tests {
     }
 
     #[test]
-    fn probing_is_skipped_when_images_are_off() {
-        assert!(probe(false).is_none());
+    fn images_off_never_builds_a_picker() {
+        assert!(picker(Images::from_config(Some(false))).is_none());
     }
 
+    #[test]
+    fn unknown_terminals_get_placeholders_not_a_picker() {
+        // the test process runs with no kitty or wezterm markers, so the
+        // conservative default has to be off
+        if !trusted_terminal() {
+            assert!(picker(Images::from_config(None)).is_none());
+        }
+    }
+
+    #[test]
+    fn an_explicit_opt_in_always_builds_a_picker() {
+        assert!(picker(Images::from_config(Some(true))).is_some());
+    }
 }
