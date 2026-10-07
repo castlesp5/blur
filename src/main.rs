@@ -211,7 +211,8 @@ fn home_screen(
                     KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
                     KeyCode::Char('n') => return Ok(Some(home::Choice::New)),
                     KeyCode::Char('o') => {
-                        state.type_char(' ');
+                        // focus the path prompt, do not seed a character
+                        state.focus_prompt();
                     }
                     KeyCode::Up | KeyCode::Char('k') => state.move_sel(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_sel(1),

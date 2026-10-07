@@ -1,5 +1,7 @@
 # blur
 
+![demo](screenshots/syntax_highlighting.png)
+
 a modal terminal text editor written in rust.
 
 vim-style keys, syntax highlighting, a live markdown preview, and a
@@ -31,6 +33,8 @@ blur path/to/file # open a file directly
 ```
 
 ## start screen
+
+![demo](screenshots/home_screen.png)
 
 launched with no arguments, blur opens on a start screen: the logo,
 `open file`, `new buffer`, `quit`, and the files you opened last.
@@ -145,7 +149,9 @@ images = true
 
 `images` is optional. left unset, blur decides from the terminal.
 
-## markdown preview
+## markdown 
+
+![demo](screenshots/md_preview.png)
 
 press `P` with a markdown file open. the preview re-renders on every edit
 and scrolls with the editor. headings, lists, quotes, code, and links

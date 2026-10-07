@@ -295,6 +295,11 @@ impl Home {
         }
     }
 
+    /// focus the path prompt without inserting anything
+    pub fn focus_prompt(&mut self) {
+        self.input = Some(String::new());
+    }
+
     pub fn backspace(&mut self) {
         if let Some(buf) = self.input.as_mut() {
             buf.pop();
@@ -413,17 +418,15 @@ pub fn draw(frame: &mut Frame, theme: &opaline::Theme, home: &Home, cursor: (u16
         Some(_) => {
             let text_in = home.prompt().unwrap_or("");
             let prefix = " path ";
-            let mut spans = vec![
+            // the terminal cursor marks the typing point, so no block is
+            // drawn here. a fake one stacks with the real cursor.
+            let spans = vec![
                 Span::styled(
                     prefix.to_string(),
                     Style::default().fg(accent).bg(base).bold(),
                 ),
                 Span::styled(text_in.to_string(), Style::default().fg(text).bg(base)),
             ];
-            spans.push(Span::styled(
-                "█".to_string(),
-                Style::default().fg(accent).bg(base),
-            ));
             body[last - 1] = Line::from(spans);
             body[last - 2] = Line::from(Span::styled(
                 "  enter open · esc cancel".to_string(),
