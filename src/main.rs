@@ -21,7 +21,7 @@ fn main() -> std::io::Result<()> {
     // forget files that no longer exist, the way other editors do
     home::purge_missing();
     // image support is decided up front, see media::picker
-    let (_, images) = load_config();
+    let (_, images, _) = load_config();
     ratatui::run(|terminal| app(terminal, media::picker(media::Images::from_config(images))))
 }
 
@@ -119,12 +119,13 @@ fn config_path() -> Option<std::path::PathBuf> {
 
 /// tiny reader for the flat config file. unknown keys and bad values
 /// are ignored rather than fatal, so a typo never breaks startup.
-fn load_config() -> (Option<String>, Option<bool>) {
+fn load_config() -> (Option<String>, Option<bool>, Option<bool>) {
     let mut theme = None;
     let mut images = None;
+    let mut home_on_close = None;
     let text = match config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
         Some(t) => t,
-        None => return (None, images),
+        None => return (None, images, home_on_close),
     };
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -144,10 +145,13 @@ fn load_config() -> (Option<String>, Option<bool>) {
             "images" => {
                 images = Some(matches!(value, "1" | "true" | "on"));
             }
+            "home_on_close" => {
+                home_on_close = Some(matches!(value, "1" | "true" | "on"));
+            }
             _ => {}
         }
     }
-    (theme, images)
+    (theme, images, home_on_close)
 }
 
 fn save_config_theme(name: &str) {
@@ -230,6 +234,15 @@ fn home_screen(
                     _ => {}
                 }
             }
+            crossterm::event::Event::Paste(text) => {
+                // pasting a path from a file manager is the normal way
+                // to fill this in
+                if state.is_prompting() {
+                    for c in text.chars().filter(|c| !c.is_control()) {
+                        state.type_char(c);
+                    }
+                }
+            }
             crossterm::event::Event::Mouse(m) => match m.kind {
                 MouseEventKind::ScrollUp => state.move_sel(-1),
                 MouseEventKind::ScrollDown => state.move_sel(1),
@@ -307,16 +320,36 @@ fn cursor_shape(mode: i32) -> crossterm::cursor::SetCursorStyle {
     }
 }
 
-/// close the current tab. returns true when the app should exit.
-fn drop_current_tab(tabs: &mut Vec<Tab>, tab_selector: &mut usize) -> bool {
+/// what closing the current tab means for the session
+enum CloseOutcome {
+    /// a tab was removed, keep editing
+    Closed,
+    /// nothing left to show, back to the start screen
+    Home,
+    /// the app should exit
+    Quit,
+}
+
+/// close the current tab. the last one returns to the start screen
+/// instead of quitting, unless configured otherwise, so quitting
+/// always happens from there.
+fn close_current_tab(
+    tabs: &mut Vec<Tab>,
+    tab_selector: &mut usize,
+    home_on_close: bool,
+) -> CloseOutcome {
     if tabs.len() > 1 {
         tabs.remove(*tab_selector);
         if *tab_selector >= tabs.len() {
             *tab_selector = tabs.len() - 1;
         }
-        false
+        CloseOutcome::Closed
+    } else if home_on_close {
+        tabs.clear();
+        *tab_selector = 0;
+        CloseOutcome::Home
     } else {
-        true
+        CloseOutcome::Quit
     }
 }
 
@@ -327,7 +360,10 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
         crossterm::event::EnableMouseCapture,
     )?;
     let args: Vec<String> = std::env::args().collect();
-    let (cfg_theme, _cfg_images) = load_config();
+    let (cfg_theme, _cfg_images, cfg_home_on_close) = load_config();
+    // closing the last tab returns to the start screen, so quitting is
+    // always a deliberate choice made there
+    let home_on_close = cfg_home_on_close.unwrap_or(true);
     let mut theme_name = cfg_theme.unwrap_or_else(|| String::from("catppuccin-mocha"));
     let mut theme = opaline::load_by_name(&theme_name).unwrap();
     let mut theme_prev = theme_name.clone();
@@ -417,9 +453,17 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                     tabs.push(Tab::new());
                     tab_selector = tabs.len() - 1;
                 }
-                // quit and prompt never come back from the start screen
-                Some(home::Choice::Quit) | Some(home::Choice::Prompt) | None => {}
+                // quitting is always done from here
+                Some(home::Choice::Quit) | None => {
+                    media::clear(&mut imgs);
+                    break;
+                }
+                Some(home::Choice::Prompt) => {}
             }
+            if tabs.is_empty() {
+                tabs.push(Tab::new());
+            }
+            tab_selector = tab_selector.min(tabs.len() - 1);
             vis = Visual::new();
             mode = 0;
             the_command_line.clear();
@@ -517,10 +561,12 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             if confirm_all {
                                 break;
                             }
-                            if drop_current_tab(&mut tabs, &mut tab_selector) {
-                                break;
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
+                            {
+                                CloseOutcome::Closed => mode = 0,
+                                CloseOutcome::Home => go_home = true,
+                                CloseOutcome::Quit => break,
                             }
-                            mode = 0;
                         } else {
                             confirm_all = false;
                             mode = 0;
@@ -582,11 +628,15 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                                 if !tabs[i].saved {
                                     confirm_all = false;
                                     mode = 403;
-                                } else if drop_current_tab(&mut tabs, &mut i) {
-                                    break;
                                 } else {
-                                    tab_selector = tab_selector.min(tabs.len() - 1);
-                                    mode = 0;
+                                    match close_current_tab(&mut tabs, &mut i, home_on_close) {
+                                        CloseOutcome::Closed => {
+                                            tab_selector = tab_selector.min(tabs.len() - 1);
+                                            mode = 0;
+                                        }
+                                        CloseOutcome::Home => go_home = true,
+                                        CloseOutcome::Quit => break,
+                                    }
                                 }
                             } else {
                                 tab_selector = i;
@@ -768,10 +818,12 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                         )
                         .unwrap()
                         {
-                            if drop_current_tab(&mut tabs, &mut tab_selector) {
-                                break;
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
+                            {
+                                CloseOutcome::Closed => mode = 0,
+                                CloseOutcome::Home => go_home = true,
+                                CloseOutcome::Quit => break,
                             }
-                            mode = 0;
                         }
                     }
                     1 => {
@@ -826,10 +878,12 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             if confirm_all {
                                 break;
                             }
-                            if drop_current_tab(&mut tabs, &mut tab_selector) {
-                                break;
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
+                            {
+                                CloseOutcome::Closed => mode = 0,
+                                CloseOutcome::Home => go_home = true,
+                                CloseOutcome::Quit => break,
                             }
-                            mode = 0;
                         } else if mode == 0 {
                             confirm_all = false;
                         }

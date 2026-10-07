@@ -44,6 +44,7 @@ launched with no arguments, blur opens on a start screen: the logo,
 | `j` / `k`, arrows | move |
 | `enter` | open the highlighted entry, or confirm the path |
 | `o` | focus the path prompt |
+| paste | paste a path straight in |
 | any character | start typing a path |
 | `n` | new buffer |
 | `q` / `esc` | quit |
@@ -53,11 +54,17 @@ the cursor is hidden on the start screen and only appears while a path
 is being typed. in normal mode, `h` comes back here without closing any
 open tabs.
 
+closing the last tab also brings you here, so quitting is always a
+deliberate choice made from the start screen rather than something you
+fall into.
+
 recents live in `$XDG_STATE_HOME/blur/recent`, or `$BLUR_STATE_DIR/recent`
 when that is set. entries that are deleted, are not files, or resolve to
 the same file twice are dropped at startup.
 
 ## normal mode
+
+![demo](screenshots/normal_mode.png)
 
 | keys | action |
 | ---- | ------ |
@@ -79,10 +86,12 @@ the same file twice are dropped at startup.
 | `t` | theme picker |
 | `P` | toggle preview pane |
 | `X` | close all saved tabs |
-| `q` | close tab or quit |
+| `q` | close tab, or go to the start screen if it was the last one |
 | `Q` | quit everything |
 
 ## insert mode
+
+![demo](screenshots/insert_mode.png)
 
 | keys | action |
 | ---- | ------ |
@@ -110,6 +119,8 @@ snaps back to the cursor.
 
 ## theme picker
 
+![demo](screenshots/theme_menu.png)
+
 `j` / `k` or arrows move with live preview, `enter` keeps the theme, `esc`
 restores the previous one. each row shows three accent dots sampled from
 the theme.
@@ -126,6 +137,8 @@ a failed save or open keeps the buffer and the typed path, so a retry
 costs nothing.
 
 ## help
+
+![demo](screenshots/help_menu.png)
 
 press `?` in normal mode for a sheet covering editing, files, view, and
 mouse. any key closes it.
@@ -145,9 +158,16 @@ mouse. any key closes it.
 ```toml
 theme = "catppuccin-mocha"
 images = true
+home_on_close = true
 ```
 
-`images` is optional. left unset, blur decides from the terminal.
+every key is optional.
+
+| key | default | meaning |
+| --- | ------- | ------- |
+| `theme` | `catppuccin-mocha` | name of a bundled theme |
+| `images` | unset | terminal image support, see the preview section |
+| `home_on_close` | `true` | closing the last tab returns to the start screen instead of quitting |
 
 ## markdown 
 

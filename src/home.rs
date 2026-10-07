@@ -208,7 +208,7 @@ impl Home {
     /// where the path input sits on screen
     pub fn prompt_row(&self) -> u16 {
         let h = self.screen_h;
-        h.saturating_sub(1)
+        h.saturating_sub(2)
     }
 
     pub fn prompt_col(&self) -> u16 {
