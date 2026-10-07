@@ -116,8 +116,8 @@ pub fn record_recent(path: &str) {
         if !Path::new(&f).is_file() {
             continue;
         }
-        let same = f == path
-            || std::fs::canonicalize(&f).unwrap_or_else(|_| PathBuf::from(&f)) == key;
+        let same =
+            f == path || std::fs::canonicalize(&f).unwrap_or_else(|_| PathBuf::from(&f)) == key;
         if !same {
             files.push(f);
         }
