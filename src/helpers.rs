@@ -29,23 +29,26 @@ pub fn hue(theme: &opaline::Theme, hue: &str) -> opaline::OpalineColor {
         return c;
     }
     let fallbacks: &[&str] = match hue {
-        "blue" => &["accent.secondary", "info"],
-        "green" => &["success", "accent.primary"],
-        "mauve" => &["accent.primary", "accent.tertiary"],
-        "pink" => &["accent.tertiary", "accent.primary"],
-        "peach" => &["warning", "accent.tertiary"],
-        "red" => &["error"],
-        "yellow" => &["warning"],
-        "teal" => &["accent.secondary", "success"],
-        "sky" | "sapphire" => &["accent.secondary", "info"],
-        "lavender" => &["accent.primary"],
-        "overlay0" | "subtext0" => &["text.dim"],
-        _ => &[],
+        "blue" | "sapphire" | "sky" => {
+            &["accent.secondary", "info", "accent.primary", "text.primary"]
+        }
+        "green" | "teal" => &["success", "accent.primary", "text.primary"],
+        "mauve" | "pink" | "lavender" => &["accent.primary", "accent.tertiary", "accent.secondary"],
+        "peach" | "yellow" => &["warning", "accent.tertiary", "accent.primary"],
+        "red" => &["error", "warning", "accent.primary"],
+        "overlay0" | "subtext0" => &["text.dim", "text.muted"],
+        _ => &["accent.primary", "text.primary"],
     };
     fallbacks
         .iter()
         .find_map(|k| theme.try_color(k))
-        .unwrap_or_else(|| theme.color("text.primary"))
+        .or_else(|| theme.try_color("accent.primary"))
+        .or_else(|| theme.try_color("text.primary"))
+        .unwrap_or(opaline::OpalineColor {
+            r: 203,
+            g: 166,
+            b: 247,
+        })
 }
 
 /// resolve a structural token with a safe fallback chain.

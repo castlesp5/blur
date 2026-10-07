@@ -139,6 +139,16 @@ fn save_config_theme(name: &str) {
     }
 }
 
+/// shape the terminal cursor to match what the editor is doing: bar while
+/// typing, underline while selecting, block at rest.
+fn cursor_shape(mode: i32) -> crossterm::cursor::SetCursorStyle {
+    match mode {
+        1 | 10 | 11 => crossterm::cursor::SetCursorStyle::BlinkingBar,
+        2 | 3 => crossterm::cursor::SetCursorStyle::SteadyUnderScore,
+        _ => crossterm::cursor::SetCursorStyle::SteadyBlock,
+    }
+}
+
 /// close the current tab. returns true when the app should exit.
 fn drop_current_tab(tabs: &mut Vec<Tab>, tab_selector: &mut usize) -> bool {
     if tabs.len() > 1 {
@@ -188,6 +198,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut layout = preview::UiLayout::default();
     let mut confirm_all = false;
     let mut press: Option<(i32, i32)> = None;
+    let mut last_shape: Option<crossterm::cursor::SetCursorStyle> = None;
     tabs.push(Tab::new());
     match args.len() {
         1 => {}
@@ -204,6 +215,13 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         },
     }
     loop {
+        // cursor shape belongs to the terminal, not the frame. write it
+        // only when it actually changes, always outside the draw call.
+        let shape = cursor_shape(mode);
+        if last_shape != Some(shape) {
+            let _ = crossterm::execute!(std::io::stdout(), shape);
+            last_shape = Some(shape);
+        }
         let (before, rest) = tabs.split_at_mut(tab_selector);
         let (active, after) = rest.split_first_mut().unwrap();
         terminal.draw(|frame| {
@@ -410,8 +428,15 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                             menu.sel = menu
                                 .names
                                 .iter()
-                                .position(|n| n == &theme_name)
-                                .unwrap_or(0);
+                                .position(|n| {
+                                    n == &theme_name || n.eq_ignore_ascii_case(&theme_name)
+                                })
+                                .or_else(|| {
+                                    menu.display
+                                        .iter()
+                                        .position(|d| d.eq_ignore_ascii_case(&theme_name))
+                                })
+                                .unwrap_or(menu.sel);
                             theme_prev = theme_name.clone();
                             fill_dots(&mut menu);
                             mode = 12;
@@ -845,7 +870,7 @@ fn renderer(
     // the close cell is always reserved so hovering never shifts layout.
     let hover = lay.mouse;
     let _ = hover;
-    let show_closers = all.len() > 1;
+    // always show '×' even for a single tab
     let pills: Vec<(Vec<Span>, usize, u16)> = all
         .iter()
         .enumerate()
@@ -858,10 +883,10 @@ fn renderer(
             let close_at;
             if active {
                 let fg = fg_color(hue(theme, mode_key));
-                spans.push(Span::styled(
-                    "\u{e0b6}",
-                    Style::default().fg(mcolor).bg(base),
-                ));
+                // Active tab: sharp but colorful pill
+                spans.push(Span::styled(" ", Style::default().bg(base)));
+                w += 1;
+                spans.push(Span::styled("", Style::default().fg(mcolor).bg(base)));
                 w += 1;
                 spans.push(Span::styled(
                     format!(" {} ", i + 1),
@@ -876,30 +901,25 @@ fn renderer(
                 ));
                 w += UnicodeWidthStr::width(name.as_str()) + 1;
                 if !t.saved {
-                    spans.push(Span::styled(
-                        "\u{25cf} ",
-                        Style::default().fg(errc).bg(mcolor),
-                    ));
+                    spans.push(Span::styled("● ", Style::default().fg(errc).bg(mcolor)));
                     w += 2;
                 }
                 close_at = w as u16;
                 spans.push(Span::styled(
-                    if show_closers { "\u{00d7} " } else { "  " },
+                    "× ",
                     Style::default().fg(fg).bg(mcolor).bold(),
                 ));
                 w += 2;
-                spans.push(Span::styled(
-                    "\u{e0b4}",
-                    Style::default().fg(mcolor).bg(base),
-                ));
+                spans.push(Span::styled("", Style::default().fg(mcolor).bg(base)));
                 w += 1;
             } else {
+                // Inactive tab: very minimal, no background, just dim text and icons
                 spans.push(Span::styled(
-                    format!(" {} ", i + 1),
+                    format!("  {} ", i + 1),
                     Style::default().fg(faint).bg(base),
                 ));
-                w += 3;
-                spans.push(Span::styled(glyph, Style::default().fg(textc).bg(base)));
+                w += 4;
+                spans.push(Span::styled(glyph, Style::default().fg(dim).bg(base)));
                 w += UnicodeWidthStr::width(glyph);
                 spans.push(Span::styled(
                     name.clone(),
@@ -907,19 +927,13 @@ fn renderer(
                 ));
                 w += UnicodeWidthStr::width(name.as_str());
                 if !t.saved {
-                    spans.push(Span::styled(
-                        " \u{25cf}",
-                        Style::default().fg(errc).bg(base),
-                    ));
+                    spans.push(Span::styled(" ●", Style::default().fg(errc).bg(base)));
                     w += 2;
                 }
                 spans.push(Span::styled(" ", Style::default().bg(base)));
                 w += 1;
                 close_at = w as u16;
-                spans.push(Span::styled(
-                    if show_closers { "\u{00d7} " } else { "  " },
-                    Style::default().fg(faint).bg(base),
-                ));
+                spans.push(Span::styled("× ", Style::default().fg(faint).bg(base)));
                 w += 2;
             }
             (spans, w, close_at)
@@ -1014,7 +1028,7 @@ fn renderer(
                 false
             };
 
-            let num = format!("{:>w$} ", i + 1, w = digits as usize);
+            let num = format!("{:>w$} │", i + 1, w = digits as usize);
             let num_st = if cur {
                 Style::default().fg(lav).bold()
             } else if in_selection {
@@ -1024,6 +1038,10 @@ fn renderer(
             };
 
             let mut spans = vec![Span::styled(num, num_st)];
+            if cur {
+                // subtly highlight the gutter symbol too
+                spans[0].style = spans[0].style.fg(mcolor);
+            }
             // a whisper of wash on the cursor line, none while typing so
             // the code area stays transparent in insert mode
             let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
@@ -1427,15 +1445,9 @@ fn renderer(
         }
     }
 
-    // adaptive cursor shape per state: block at rest, bar while typing,
-    // underline while selecting. steady so it stays sharp, blinking bar
-    // in insert so the typing point reads instantly.
-    let shape = match mode {
-        1 | 10 | 11 => crossterm::cursor::SetCursorStyle::BlinkingBar,
-        2 | 3 => crossterm::cursor::SetCursorStyle::SteadyUnderScore,
-        _ => crossterm::cursor::SetCursorStyle::SteadyBlock,
-    };
-    let _ = crossterm::execute!(std::io::stdout(), shape);
+    // adaptive cursor shape per state. emitted by the event loop, never
+    // from inside a frame: a raw stdout write mid-render desynchronises
+    // ratatui's own cursor bookkeeping and leaves a second cursor behind.
 
     // theme picker: quickpick popup with accent dots, current marker,
     // footer hints. geometry is clamped so tiny screens never break.
@@ -1538,22 +1550,26 @@ fn renderer(
         }
     }
 
-    // cursor sits exactly on the cell under edit
-    frame.set_cursor_position((
-        inner.x + gutter_w + visual_x.saturating_sub(tab.scroll_x),
-        inner.y + (tab.cursor_y as u16).saturating_sub(tab.scroll_y),
-    ));
-    if mode == 10 || mode == 11 {
+    // one cursor placement per frame, so there is never a second one
+    let cursor = if mode == 10 || mode == 11 {
         let prefix = if mode == 10 { "save: " } else { "open: " };
         // cells before typed text:  + pill +  + space + file glyph
-        let x = status_area.x
-            + 1
-            + pill_w as u16
-            + 1
-            + 1
-            + UnicodeWidthStr::width(fgly) as u16
-            + UnicodeWidthStr::width(prefix) as u16
-            + UnicodeWidthStr::width(the_command_line) as u16;
-        frame.set_cursor_position((x, status_area.y));
-    }
+        (
+            status_area.x
+                + 1
+                + pill_w as u16
+                + 1
+                + 1
+                + UnicodeWidthStr::width(fgly) as u16
+                + UnicodeWidthStr::width(prefix) as u16
+                + UnicodeWidthStr::width(the_command_line) as u16,
+            status_area.y,
+        )
+    } else {
+        (
+            inner.x + gutter_w + visual_x.saturating_sub(tab.scroll_x),
+            inner.y + (tab.cursor_y as u16).saturating_sub(tab.scroll_y),
+        )
+    };
+    frame.set_cursor_position(cursor);
 }
