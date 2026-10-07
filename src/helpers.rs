@@ -1433,10 +1433,17 @@ fn md_colors(theme: &opaline::Theme) -> crate::preview::MdColors {
 }
 
 impl Highlighter {
-    pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
-        if let Some(cached) = &tab.highlight_cache {
-            return cached.clone();
+    /// populate the cache if it is stale, then hand back a borrow of it.
+    /// the renderer styles from this directly, so no whole-file clone
+    /// happens on every frame.
+    pub fn ensure_fresh<'a>(&'a self, tab: &'a mut Tab) -> &'a Vec<ratatui::text::Line<'a>> {
+        if tab.highlight_cache.is_none() {
+            self.compute(tab);
         }
+        tab.highlight_cache.as_ref().expect("just populated")
+    }
+
+    fn compute(&self, tab: &mut Tab) {
         let low = content_sample(&tab.input_box);
         let (syntax, label) = self.detect_syntax_parts(tab, &low);
         tab.lang = label;
@@ -1487,8 +1494,8 @@ impl Highlighter {
                     line, &self.md,
                 )));
             }
-            tab.highlight_cache = Some(out.clone());
-            return out;
+            tab.highlight_cache = Some(out);
+            return;
         }
 
         let mut the_highlighter = syntect::easy::HighlightLines::new(syntax, &self.syntect_theme);
@@ -1521,13 +1528,15 @@ impl Highlighter {
             }
             spans.push(ratatui::text::Line::from(spans_for_line));
         }
-        tab.highlight_cache = Some(spans.clone());
-        spans
+        tab.highlight_cache = Some(spans);
     }
 }
 
 pub struct Tab {
     pub file_name: String,
+    /// bumped on every edit, lets the preview skip re-parsing a
+    /// document that has not changed
+    pub revision: u64,
     /// language shown in the status bar, filled in while highlighting
     pub lang: String,
     pub saved: bool,
@@ -1545,6 +1554,7 @@ impl Tab {
     pub fn new() -> Self {
         Self {
             file_name: String::from(""),
+            revision: 0,
             lang: String::new(),
             saved: false,
             highlight_cache: None,
@@ -1561,6 +1571,7 @@ impl Tab {
     pub fn unsave(&mut self) {
         self.saved = false;
         self.highlight_cache = None;
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 
@@ -1885,7 +1896,7 @@ mod tests {
             "def greet(name):".into(),
             "    return name".into(),
         ];
-        let lines = h.highlight(&mut tab);
+        let lines = h.ensure_fresh(&mut tab).clone();
         let color_of = |li: usize, ci: usize| -> (u8, u8, u8) {
             match lines[li].spans[ci].style.fg {
                 Some(ratatui::style::Color::Rgb(r, g, b)) => (r, g, b),

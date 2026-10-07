@@ -11,6 +11,7 @@ Built on [ratatui](https://github.com/ratatui-org/ratatui), [crossterm](https://
 - Automatic language detection across file names, extensions, shebangs and content
 - Smart indentation, electric brackets, bracket-split enter, undo of each
 - Markdown preview pane with inline images
+- Keyboard help sheet on `?`
 - 39 built-in themes with live preview
 - Full mouse support
 - Bracketed paste
@@ -74,6 +75,7 @@ Recent files live in `$XDG_STATE_HOME/blur/recent`, or `$BLUR_STATE_DIR/recent` 
 | `O` | Open file in a new tab |
 | `N` | New empty tab |
 | `Tab` / `Shift+Tab` | Next / previous tab |
+| `?` | Keyboard help |
 | `t` | Theme picker |
 | `P` | Toggle markdown preview |
 | `X` | Close all saved tabs |
@@ -110,6 +112,11 @@ Scrolling moves the window and the cursor together, so the view never snaps back
 | `j` / `k`, arrows | Theme picker navigation |
 | `Enter` | Apply theme |
 | `Esc` | Restore previous theme |
+| Any key | Close the help sheet |
+
+## Help
+
+Press `?` in Normal mode for a keyboard sheet covering editing, files, view, and mouse. Any key closes it.
 
 ## Mouse
 

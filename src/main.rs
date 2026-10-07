@@ -169,16 +169,16 @@ fn home_screen(
         let size = terminal.size()?;
         let height = size.height as usize;
         state.set_screen(height);
-        terminal.draw(|frame| home::draw(frame, theme, &state, (0, 0)))?;
-        // the cursor is only ever useful while a path is being typed,
-        // the rest of the start screen stays quiet
-        if state.is_prompting() {
-            let col = state.prompt_col() + state.cursor().unwrap_or(0) as u16;
-            terminal.set_cursor_position((col, state.prompt_row()))?;
-            terminal.show_cursor()?;
-        } else {
-            terminal.hide_cursor()?;
-        }
+        // one cursor api for the whole app. ratatui shows the cursor
+        // when a frame names a position and hides it when it does not,
+        // so the start screen simply stays quiet until a path is typed.
+        terminal.draw(|frame| {
+            home::draw(frame, theme, &state, (0, 0));
+            if state.is_prompting() {
+                let col = state.prompt_col() + state.cursor().unwrap_or(0) as u16;
+                frame.set_cursor_position((col, state.prompt_row()));
+            }
+        })?;
 
         let event = crossterm::event::read()?;
         match event {
@@ -406,8 +406,40 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                 &the_command_line,
             )
         })?;
-        let tab = &mut tabs[tab_selector];
+        // images encode on a worker thread. the loop blocks on input, so
+        // give them a few frames to land before sleeping on read again.
+        // bounded and only while work is outstanding, so it never spins.
+        if imgs.pending() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while imgs.pending() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(12));
+                // never swallow a keystroke while waiting
+                if crossterm::event::poll(std::time::Duration::from_millis(0))? {
+                    break;
+                }
+                terminal.draw(|frame| {
+                    renderer(
+                        frame,
+                        &theme,
+                        before,
+                        after,
+                        active,
+                        &highlighter,
+                        &vis,
+                        &menu,
+                        &theme_name,
+                        &mut pv,
+                        &mut imgs,
+                        &mut layout,
+                        confirm_all,
+                        mode,
+                        &the_command_line,
+                    )
+                })?;
+            }
+        }
 
+        let tab = &mut tabs[tab_selector];
         let event = crossterm::event::read()?;
         let mut the_text = tab.input_box.clone();
         match &event {
@@ -633,6 +665,8 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             if !pv.open {
                                 media::clear(&mut imgs);
                             }
+                        } else if event_key.code == crossterm::event::KeyCode::Char('?') {
+                            mode = 13;
                         } else if event_key.code == crossterm::event::KeyCode::Char('t') {
                             menu.sel = menu
                                 .names
@@ -749,6 +783,10 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             confirm_all = false;
                         }
                     }
+                    // help: any key dismisses
+                    13 => {
+                        mode = 0;
+                    }
                     // theme picker: move with live preview, enter keeps, esc restores
                     12 => {
                         let n = menu.names.len();
@@ -832,6 +870,7 @@ fn mode_style(mode: i32, theme: &opaline::Theme) -> (String, Style, Color) {
         3 => (" v-line ", "pink"),
         10 | 11 => (" command ", "peach"),
         12 => (" themes ", "teal"),
+        13 => (" help ", "blue"),
         401 | 402 => (" error ", "red"),
         403 => (" confirm ", "yellow"),
         _ => (" error ", "red"),
@@ -908,6 +947,7 @@ fn mode_icon(mode: i32) -> &'static str {
         3 => "󰒅 ",
         10 | 11 => "󰞷 ",
         12 => " ",
+        13 => "󰋖 ",
         401 | 402 => "󰅚 ",
         403 => " ",
         _ => "󰘳 ",
@@ -969,11 +1009,12 @@ fn shorten_middle(name: &str, max: usize) -> String {
 
 fn hint_for(mode: i32) -> &'static str {
     match mode {
-        0 => "i insert · v visual · t themes · P preview · q quit",
+        0 => "i insert · ? help · t themes · P preview · q quit",
         1 => "esc normal",
         2 | 3 => "d delete · esc cancel",
         10 | 11 => "enter ok · esc cancel",
         12 => "j/k move · enter apply · esc cancel",
+        13 => "any key closes",
         403 => "y quit · n stay",
         _ => "esc back",
     }
@@ -1214,24 +1255,31 @@ fn renderer(
 
     // middle: gutter + code, zero tinted bg, cursor line reads via
     // bold number + underline, selection via bold + underline. transparent.
-    // subtle wash so the cursor line reads without hiding the theme
-    let mut visible: Vec<Line> = highlighter
-        .highlight(tab)
-        .into_iter()
+    // ensure the cache is warm, then release the mutable borrow so the
+    // rest of the render can read tab freely.
+    highlighter.ensure_fresh(tab);
+    let cursor_y = tab.cursor_y;
+    let scroll_y = tab.scroll_y as usize;
+    let cache = tab
+        .highlight_cache
+        .take()
+        .expect("ensure_fresh populates it");
+    let mut visible: Vec<Line> = cache
+        .iter()
         .enumerate()
-        .skip(tab.scroll_y as usize)
+        .skip(scroll_y)
         .take(edit_h as usize)
-        .map(|(i, mut line)| {
-            let cur = i as i32 == tab.cursor_y;
+        .map(|(i, line)| {
+            let cur = i as i32 == cursor_y;
             let in_selection = if vis.on && (mode == 2 || mode == 3) {
                 if mode == 3 {
-                    (i as i32 - vis.v_y as i32).abs() + (vis.v_y as i32 - tab.cursor_y).abs()
-                        == (i as i32 - tab.cursor_y).abs()
+                    (i as i32 - vis.v_y as i32).abs() + (vis.v_y as i32 - cursor_y).abs()
+                        == (i as i32 - cursor_y).abs()
                 } else {
-                    let (y1, y2) = if tab.cursor_y < vis.v_y as i32 {
-                        (tab.cursor_y, vis.v_y as i32)
+                    let (y1, y2) = if cursor_y < vis.v_y as i32 {
+                        (cursor_y, vis.v_y as i32)
                     } else {
-                        (vis.v_y as i32, tab.cursor_y)
+                        (vis.v_y as i32, cursor_y)
                     };
                     i as i32 >= y1 && i as i32 <= y2
                 }
@@ -1241,46 +1289,46 @@ fn renderer(
 
             let num = format!("{:>w$} │ ", i + 1, w = digits as usize);
             let num_st = if cur {
-                Style::default().fg(lav).bold()
+                Style::default().fg(mcolor).bold()
             } else if in_selection {
                 Style::default().fg(textc).bold()
             } else {
                 Style::default().fg(faint)
             };
 
-            let mut spans = vec![Span::styled(num, num_st)];
-            if cur {
-                // subtly highlight the gutter symbol too
-                spans[0].style = spans[0].style.fg(mcolor);
-            }
-            // a whisper of wash on the cursor line, none while typing so
-            // the code area stays transparent in insert mode
-            let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
-            if let Some(bg) = wash {
-                for s in &mut line.spans {
-                    s.style = s.style.bg(bg);
-                }
-            }
-            for s in &mut line.spans {
-                if cur {
-                    s.style = s.style.add_modifier(Modifier::UNDERLINED);
-                }
-                if in_selection {
-                    // For mode 2 (visual), we should ideally highlight specific characters,
-                    // but for now let's at least highlight the whole line or parts of it.
-                    // Improving visual mode to character-level would require more complex span splitting.
-                    s.style = s.style.bg(fade_rgb(theme, lav, 0.3));
-                }
-            }
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(Span::styled(num, num_st));
 
-            spans.append(&mut line.spans);
+            // a whisper of wash on the cursor line, skipped while
+            // typing so the area stays transparent in insert mode
+            let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
+            // only the cursor line and any selection need restyling,
+            // every other row keeps its cached spans untouched
+            if wash.is_some() || in_selection {
+                for s in line.spans.iter() {
+                    let mut s = s.clone();
+                    if let Some(bg) = wash {
+                        s.style = s.style.bg(bg);
+                    }
+                    if cur {
+                        s.style = s.style.add_modifier(Modifier::UNDERLINED);
+                    }
+                    if in_selection {
+                        s.style = s.style.bg(fade_rgb(theme, lav, 0.3));
+                    }
+                    spans.push(s);
+                }
+            } else {
+                spans.extend(line.spans.iter().cloned());
+            }
             Line::from(spans)
         })
         .collect();
-
     while visible.len() < edit_h as usize {
         visible.push(Line::from(Span::styled(" ", Style::default().bg(base))));
     }
+    // give the cache straight back so nothing re-highlights next frame
+    tab.highlight_cache = Some(cache);
 
     // calm dim frame so the interior stays deep, mode color lives
     // only on pills, thumb, and cursor number. bright frame sides
@@ -1382,7 +1430,8 @@ fn renderer(
             code: hue(theme, "green").into(),
             quote: dim,
         };
-        let doc = preview::parse_markdown(&tab.input_box, &mdc);
+        let doc =
+            preview::PreviewState::doc_rows(pv, &tab.file_name, tab.revision, &tab.input_box, &mdc);
         let dir = tab
             .file_name
             .rsplit_once('/')
@@ -1429,7 +1478,7 @@ fn renderer(
                 preview::DocRow::Media { path, .. } => {
                     let full = resolve_media_path(path, &dir);
                     if !full.is_empty() && std::path::Path::new(&full).exists() && cols > 4 {
-                        media::rows_for(&full, cols).map(|h| (full, h))
+                        imgs.rows(&full, cols).map(|h| (full, h))
                     } else {
                         None
                     }
@@ -1437,7 +1486,7 @@ fn renderer(
                 _ => None,
             };
             let height = img.as_ref().map(|(_, h)| *h as usize).unwrap_or(1);
-            items.push((row_no, row, img));
+            items.push((row_no, row.clone(), img));
             row_no += height;
         }
         let doc_rows = row_no;
@@ -1461,7 +1510,7 @@ fn renderer(
             }
             if cursor_row >= start {
                 match row {
-                    preview::DocRow::Text(l) => slice.push(l),
+                    preview::DocRow::Text(l) => slice.push(l.clone()),
                     preview::DocRow::Media { alt, path } => {
                         // when the terminal can draw the image we leave
                         // the row empty so nothing peeks around its edges
@@ -1567,6 +1616,20 @@ fn renderer(
 
     let gap = (status_area.width as usize).saturating_sub(pill_w + msg_w + pos_w + brand_w + 6);
 
+    // cursor column for the save/open prompt, measured off the same
+    // cells the status line below is built from
+    // measure the very spans the status line is built from, so the
+    // cursor cannot drift from the text it belongs to
+    let icon_span = format!(" {fgly} ");
+    let prompt_x = status_area.x
+        + 1 // mode pill left cap
+        + UnicodeWidthStr::width(pill_label.as_str()) as u16
+        + 1 // mode pill right cap
+        + 1 // gap
+        + 1 // info pill left cap
+        + UnicodeWidthStr::width(icon_span.as_str()) as u16
+        + UnicodeWidthStr::width(msg.as_str()) as u16;
+
     let status = Line::from(vec![
         // Mode Pill
         Span::styled("", Style::default().fg(mstyle.bg.unwrap_or(base)).bg(base)),
@@ -1576,7 +1639,7 @@ fn renderer(
         // Message / Info Pill
         Span::styled("", Style::default().fg(fade_rgb(theme, lav, 0.2)).bg(base)),
         Span::styled(
-            format!(" {} ", fgly),
+            icon_span.clone(),
             Style::default().fg(textc).bg(fade_rgb(theme, lav, 0.2)),
         ),
         Span::styled(
@@ -1608,6 +1671,103 @@ fn renderer(
         Span::styled("", Style::default().fg(lav).bg(base)),
     ]);
     frame.render_widget(Paragraph::new(status).bg(base), status_area);
+
+    // help sheet, same rounded frame as the confirm box
+    if mode == 13 {
+        let groups: [(&str, &[(&str, &str)]); 4] = [
+            ("editing", &[
+                ("i a o", "insert, append, open line"),
+                ("v V", "visual, visual line"),
+                ("d", "delete selection or line"),
+                ("> <", "indent, unindent"),
+                ("u r", "undo, redo"),
+            ]),
+            ("files", &[
+                ("w W", "save, save as"),
+                ("O", "open in a new tab"),
+                ("N", "new tab"),
+                ("q Q X", "close, quit all, close saved"),
+            ]),
+            ("view", &[
+                ("P", "toggle preview pane"),
+                ("t", "theme picker"),
+                ("ctrl+d/u", "scroll half a page"),
+                ("page up/down", "scroll"),
+                ("home end", "line start, end"),
+            ]),
+            ("mouse", &[
+                ("click", "place cursor or pick a row"),
+                ("drag", "select"),
+                ("wheel", "scroll"),
+            ]),
+        ];
+        let rows: usize = groups.iter().map(|(_, items)| items.len() + 1).sum();
+        let key_w = groups
+            .iter()
+            .flat_map(|(_, items)| items.iter().map(|(k, _)| *k))
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(10);
+        let desc_w = groups
+            .iter()
+            .flat_map(|(_, items)| items.iter().map(|(_, d)| *d))
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(20);
+        let indent = 3u16;
+        let w = (indent + key_w as u16 + 2 + desc_w as u16 + 4)
+            .min(frame.area().width.saturating_sub(4))
+            .max(30);
+        let h = (rows as u16 + 3).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().width.saturating_sub(w) / 2,
+            frame.area().height.saturating_sub(h) / 2,
+            w,
+            h,
+        );
+        let pop = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(mcolor))
+            .style(Style::default().bg(base))
+            .title_top(Line::from(vec![
+                Span::styled(" ", Style::default().bg(base)),
+                Span::styled("", Style::default().fg(mcolor).bg(base)),
+                Span::styled(
+                    " keyboard ",
+                    Style::default()
+                        .fg(fg_color(hue(theme, "blue")))
+                        .bg(mcolor)
+                        .bold(),
+                ),
+                Span::styled("", Style::default().fg(mcolor).bg(base)),
+            ]));
+        let inner_p = pop.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(pop, area);
+
+        let mut lines: Vec<Line> = Vec::with_capacity(rows);
+        for (title, items) in groups {
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(indent as usize)),
+                Span::styled(title.to_string(), Style::default().fg(muted).bg(base)),
+            ]));
+            for (key, desc) in items {
+                let pad = key_w.saturating_sub(UnicodeWidthStr::width(*key)) + 2;
+                lines.push(Line::from(vec![
+                    Span::raw(" ".repeat((indent + 2) as usize)),
+                    Span::styled(*key, Style::default().fg(textc).bg(base).bold()),
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(*desc, Style::default().fg(muted).bg(base)),
+                ]));
+            }
+            lines.push(Line::from(""));
+        }
+        while lines.len() > inner_p.height as usize {
+            lines.pop();
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)).bg(base), inner_p);
+    }
 
     // rounded modal for confirm and errors
     lay.modal = None;
@@ -1764,19 +1924,7 @@ fn renderer(
 
     // one cursor placement per frame, so there is never a second one
     let cursor = if mode == 10 || mode == 11 {
-        let prefix = if mode == 10 { "save: " } else { "open: " };
-        // cells before typed text:  + pill +  + space + file glyph
-        (
-            status_area.x
-                + 1
-                + pill_w as u16
-                + 1
-                + 1
-                + UnicodeWidthStr::width(fgly) as u16
-                + UnicodeWidthStr::width(prefix) as u16
-                + UnicodeWidthStr::width(the_command_line) as u16,
-            status_area.y,
-        )
+        (prompt_x, status_area.y)
     } else {
         (
             inner.x + gutter_w + visual_x.saturating_sub(tab.scroll_x),

@@ -7,13 +7,52 @@
 use ratatui::style::*;
 use ratatui::text::*;
 
+/// the parsed document, kept until the buffer actually changes
+struct DocCache {
+    name: String,
+    revision: u64,
+    rows: Vec<DocRow>,
+}
+
 pub struct PreviewState {
     pub open: bool,
+    doc: Option<DocCache>,
 }
 
 impl PreviewState {
     pub fn new() -> Self {
-        Self { open: false }
+        Self {
+            open: false,
+            doc: None,
+        }
+    }
+
+    /// parsed rows for the current buffer. re-parsing a document on
+    /// every frame was the second real cost in the preview, and it is
+    /// pure waste when nothing changed since the last frame.
+    pub fn doc_rows<'a>(
+        state: &'a mut PreviewState,
+        name: &str,
+        revision: u64,
+        lines: &[String],
+        colors: &MdColors,
+    ) -> &'a [DocRow] {
+        let fresh = state
+            .doc
+            .as_ref()
+            .is_some_and(|c| c.revision == revision && c.name == name);
+        if !fresh {
+            state.doc = Some(DocCache {
+                name: name.to_string(),
+                revision,
+                rows: parse_markdown(lines, colors),
+            });
+        }
+        state
+            .doc
+            .as_ref()
+            .map(|c| c.rows.as_slice())
+            .unwrap_or_default()
     }
 }
 
@@ -72,6 +111,7 @@ pub fn cell_to_buffer(
     (row as i32, byte as i32)
 }
 
+#[derive(Clone)]
 pub enum DocRow {
     Text(Line<'static>),
     /// image reference, row reservation computed at layout time

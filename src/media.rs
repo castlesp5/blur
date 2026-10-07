@@ -7,12 +7,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc::{Receiver, Sender};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 pub use ratatui_image::picker::Picker;
 use ratatui_image::picker::ProtocolType;
-use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::thread::{ResizeRequest, ResizeResponse, ThreadProtocol};
 use ratatui_image::{Resize, StatefulImage};
 
 /// pixels per cell column, and roughly two cells per row
@@ -21,11 +22,6 @@ const ROW_PX: u32 = 20;
 /// keep images from eating the whole pane
 const MAX_COLS: u16 = 60;
 const MAX_ROWS: u16 = 16;
-
-pub struct Media {
-    picker: Option<Picker>,
-    cache: HashMap<String, (StatefulProtocol, (u32, u32))>,
-}
 
 /// what the user asked for. `images` is tri state so an explicit
 /// `images = true` can force images on inside a multiplexer.
@@ -48,9 +44,7 @@ impl Images {
 /// looks frozen. env signals cost us nothing and cannot hang.
 pub fn picker(images: Images) -> Option<Picker> {
     match images.requested {
-        // off means off, whatever the environment claims
         Some(false) => None,
-        // on means trust the user, they configured passthrough if needed
         Some(true) => kitty_picker(),
         None => {
             if in_multiplexer() {
@@ -80,7 +74,9 @@ fn kitty_picker() -> Option<Picker> {
         p.set_protocol_type(ProtocolType::Kitty);
         let _ = tx.send(p);
     });
-    let mut p = rx.recv_timeout(std::time::Duration::from_millis(400)).ok()?;
+    let mut p = rx
+        .recv_timeout(std::time::Duration::from_millis(400))
+        .ok()?;
     p.set_protocol_type(ProtocolType::Kitty);
     Some(p)
 }
@@ -103,6 +99,43 @@ fn trusted_terminal() -> bool {
     )
 }
 
+/// one image, decoded once and resized on its own worker thread
+struct Entry {
+    dims: (u32, u32),
+    protocol: Option<ThreadProtocol>,
+    /// this image's own worker, so a finished resize needs no matching
+    rx: Receiver<ResizeResponse>,
+    /// the pane rect we last handed to the worker, and whether the
+    /// reply for it has landed. keyed on the rect because that is what
+    /// the widget is asked about, not the scaled image size.
+    asked: Option<Rect>,
+    answered: bool,
+}
+
+fn spawn_worker() -> (Sender<ResizeRequest>, Receiver<ResizeResponse>) {
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<ResizeRequest>();
+    let (res_tx, res_rx) = std::sync::mpsc::channel::<ResizeResponse>();
+    std::thread::spawn(move || {
+        while let Ok(request) = req_rx.recv() {
+            // a failed encode is dropped, the next frame retries
+            if let Ok(done) = request.resize_encode() {
+                let _ = res_tx.send(done);
+            }
+        }
+    });
+    (req_tx, res_rx)
+}
+
+/// why this matters: the crate docs are explicit that `StatefulImage`
+/// with a plain `StatefulProtocol` blocks the ui thread on resize and
+/// encode, which in a reactive editor happens on every scroll. the
+/// threaded protocol hands that work to a worker and renders whatever
+/// finished last.
+pub struct Media {
+    picker: Option<Picker>,
+    cache: HashMap<String, Entry>,
+}
+
 impl Media {
     pub fn new(picker: Option<Picker>) -> Self {
         Self {
@@ -111,53 +144,90 @@ impl Media {
         }
     }
 
-    /// true when the terminal answered the capability query
+    /// true when the terminal can be trusted with the graphics protocol
     pub fn supported(&self) -> bool {
         self.picker.is_some()
     }
 
-    /// cached protocol state for a file, decoded and resized on first use
-    pub fn protocol(&mut self, path: &str) -> Option<(u32, u32)> {
-        let key = path.to_string();
-        if let Some((_, dims)) = self.cache.get(&key) {
-            return Some(*dims);
+    /// decoded dimensions, read from disk only the first time
+    pub fn dims(&mut self, path: &str) -> Option<(u32, u32)> {
+        if let Some(entry) = self.cache.get(path) {
+            return Some(entry.dims);
         }
         let picker = self.picker.as_ref()?;
         let decoded = image::open(Path::new(path)).ok()?;
         let dims = (decoded.width().max(1), decoded.height().max(1));
+        let (tx, rx) = spawn_worker();
         let state = picker.new_resize_protocol(decoded);
-        self.cache.insert(key, (state, dims));
+        self.cache.insert(
+            path.to_string(),
+            Entry {
+                dims,
+                protocol: Some(ThreadProtocol::new(tx, Some(state))),
+                rx,
+                asked: None,
+                answered: true,
+            },
+        );
         Some(dims)
     }
 
-    /// draw the image into `area`, scaled to fit. caches the encode.
+    /// rows an image needs in a pane `cols` wide. never touches the disk
+    /// after the first call, which is what kept frames cheap.
+    pub fn rows(&mut self, path: &str, cols: u16) -> Option<u16> {
+        let dims = self.dims(path)?;
+        Some(rows_for_dims(dims, cols))
+    }
+
+    /// true while any image is still waiting on its worker. the editor
+    /// blocks on input between frames, so this is how a freshly encoded
+    /// image gets the frame it needs to appear.
+    pub fn pending(&mut self) -> bool {
+        let mut any = false;
+        for entry in self.cache.values_mut() {
+            while let Ok(done) = entry.rx.try_recv() {
+                if let Some(proto) = entry.protocol.as_mut()
+                    && proto.update_resized_protocol(done)
+                {
+                    entry.answered = true;
+                }
+            }
+            any |= entry.asked.is_some() && !entry.answered;
+        }
+        any
+    }
+
+    /// draw the image into `area`, scaled to fit.
+    ///
+    /// the widget encodes on the worker, so a rect that was never
+    /// answered stays outstanding until its reply lands.
     pub fn draw(&mut self, frame: &mut Frame, path: &str, area: Rect) {
         if area.width == 0 || area.height == 0 || self.picker.is_none() {
             return;
         }
-        self.protocol(path);
-        let Some((state, _)) = self.cache.get_mut(path) else {
+        self.dims(path);
+        let Some(entry) = self.cache.get_mut(path) else {
             return;
         };
+        if entry.asked != Some(area) {
+            entry.asked = Some(area);
+            entry.answered = false;
+        }
+        let Some(proto) = entry.protocol.as_mut() else {
+            return;
+        };
+        while let Ok(done) = entry.rx.try_recv() {
+            if proto.update_resized_protocol(done) {
+                entry.answered = true;
+            }
+        }
         let widget = StatefulImage::default().resize(Resize::Fit(None));
-        frame.render_stateful_widget(widget, area, state);
+        frame.render_stateful_widget(widget, area, proto);
     }
 }
 
-/// rows an image needs inside a pane `cols` wide, or None when the file
-/// is missing or unreadable.
-pub fn rows_for(path: &str, cols: u16) -> Option<u16> {
-    let decoded = image::open(Path::new(path)).ok()?;
-    let w = decoded.width().max(1);
-    let h = decoded.height().max(1);
-    let disp_w = cols.min(MAX_COLS) as u32 * PX_PER_COL;
-    let scale = disp_w as f64 / w as f64;
-    let rows = (h as f64 * scale) / ROW_PX as f64;
-    Some(rows.ceil().max(2.0).min(MAX_ROWS as f64) as u16)
-}
-
-/// same as `rows_for` but for an already decoded image
-#[cfg(test)]
+/// rows for an already decoded image. the renderer always goes through
+/// the cached variant so this never touches the disk.
 pub fn rows_for_dims(dims: (u32, u32), cols: u16) -> u16 {
     let disp_w = cols.min(MAX_COLS) as u32 * PX_PER_COL;
     let scale = disp_w as f64 / dims.0 as f64;
@@ -200,7 +270,8 @@ mod tests {
 
     #[test]
     fn missing_files_have_no_rows() {
-        assert_eq!(rows_for("/definitely/not/here.png", 40), None);
+        let mut media = Media::new(None);
+        assert_eq!(media.rows("/definitely/not/here.png", 40), None);
     }
 
     #[test]
@@ -242,7 +313,29 @@ mod tests {
     fn media_without_a_picker_never_reaches_for_an_image() {
         let mut media = Media::new(None);
         assert!(!media.supported());
-        assert_eq!(media.protocol("/tmp/whatever.png"), None);
+        assert_eq!(media.dims("/tmp/whatever.png"), None);
+    }
+
+    /// the real cost we removed: dimensions must come from the cache
+    /// after the first load, never from disk on every frame
+    #[test]
+    fn dims_are_read_from_disk_once() {
+        let path = std::env::temp_dir().join("blur-media-dims.png");
+        let mut img = image::RgbImage::new(64, 48);
+        for (_, _, px) in img.enumerate_pixels_mut() {
+            *px = image::Rgb([1, 2, 3]);
+        }
+        img.save(&path).unwrap();
+        let mut media = Media::new(None);
+        // no picker means no cache and no dims, that path is covered above
+        assert!(media.dims(path.to_str().unwrap()).is_none());
+
+        let mut media = Media::new(Some(Picker::halfblocks()));
+        let first = media.dims(path.to_str().unwrap());
+        assert_eq!(first, Some((64, 48)));
+        // with the file gone, the cache still answers
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(media.dims(path.to_str().unwrap()), Some((64, 48)));
     }
 
     #[test]
@@ -267,5 +360,19 @@ mod tests {
         let built = kitty_picker();
         assert!(start.elapsed() < std::time::Duration::from_millis(1500));
         assert!(built.is_some());
+    }
+}
+
+#[cfg(test)]
+mod picker_env_tests {
+    use super::*;
+
+    #[test]
+    fn kitty_env_builds_a_picker() {
+        unsafe { std::env::set_var("KITTY_WINDOW_ID", "1") };
+        unsafe { std::env::remove_var("TMUX") };
+        unsafe { std::env::remove_var("STY") };
+        assert!(trusted_terminal(), "kitty must be trusted");
+        assert!(picker(Images::from_config(None)).is_some());
     }
 }
