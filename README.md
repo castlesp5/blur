@@ -125,7 +125,7 @@ Scrolling moves the window and the cursor together, so the view never snaps back
 
 ```toml
 theme = "catppuccin-mocha"
-images = false
+images = true
 ```
 
 Written when a theme is applied, read at startup. Unknown keys are ignored.
@@ -136,7 +136,9 @@ Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because gues
 
 Press `P` with a markdown file open. Headings, lists, quotes, code, and links render live as you type.
 
-Images display through the kitty graphics protocol on kitty, WezTerm, and ghostty. Under tmux and screen they are disabled by default, because those multiplexers print passthrough sequences as plain text unless passthrough is enabled. Set `BLUR_KITTY=1` to force images on if your multiplexer is configured for it. Everywhere else, images render as text placeholders.
+Images display inline through the kitty graphics protocol. On startup blur asks the terminal what it supports instead of guessing, so kitty, WezTerm, and ghostty get real images, and anything else gets a clean text placeholder instead of raw escape codes. Set `images = false` in the config to turn them off.
+
+Inside tmux and screen the outer terminal is usually not visible, so blur skips the query there and shows placeholders.
 
 ## Syntax highlighting
 

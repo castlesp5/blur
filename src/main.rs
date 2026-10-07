@@ -1,6 +1,7 @@
 mod controls;
 mod helpers;
 mod home;
+mod media;
 mod modes;
 mod normal_mode;
 mod preview;
@@ -17,8 +18,10 @@ use select_modes::{select_mode_line, select_mode1};
 use unicode_width::UnicodeWidthStr;
 
 fn main() -> std::io::Result<()> {
-    ratatui::run(app)?;
-    Ok(())
+    // image support is probed before the tui starts, see media::probe
+    let (_, images) = load_config();
+    let picker = media::probe(images);
+    ratatui::run(|terminal| app(terminal, picker))
 }
 
 /// theme picker state: live list of every opaline theme plus a
@@ -33,7 +36,7 @@ struct ThemeMenu {
 
 /// one preview row: its line index, the parsed row, and the loaded
 /// media behind it when the row is an image.
-type PreviewItem = (usize, preview::DocRow, Option<(u32, u16)>);
+type PreviewItem = (usize, preview::DocRow, Option<(String, u16)>);
 
 /// resolve an image reference against the document directory. absolute
 /// and ~/ paths are used as-is so real files are never mangled into a
@@ -117,7 +120,7 @@ fn config_path() -> Option<std::path::PathBuf> {
 /// are ignored rather than fatal, so a typo never breaks startup.
 fn load_config() -> (Option<String>, bool) {
     let mut theme = None;
-    let mut images = preview::images_enabled();
+    let mut images = true;
     let text = match config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
         Some(t) => t,
         None => return (None, images),
@@ -312,14 +315,14 @@ fn drop_current_tab(tabs: &mut Vec<Tab>, tab_selector: &mut usize) -> bool {
     }
 }
 
-fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io::Result<()> {
     crossterm::execute!(
         std::io::stdout(),
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableMouseCapture,
     )?;
     let args: Vec<String> = std::env::args().collect();
-    let (cfg_theme, cfg_images) = load_config();
+    let (cfg_theme, _cfg_images) = load_config();
     let mut theme_name = cfg_theme.unwrap_or_else(|| String::from("catppuccin-mocha"));
     let mut theme = opaline::load_by_name(&theme_name).unwrap();
     let mut theme_prev = theme_name.clone();
@@ -344,7 +347,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
     let mut pv = preview::PreviewState::new();
-    pv.images = cfg_images;
+    let mut imgs = media::Media::new(picker);
     let mut layout = preview::UiLayout::default();
     let mut confirm_all = false;
     let mut press: Option<(i32, i32)> = None;
@@ -397,6 +400,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 &menu,
                 &theme_name,
                 &mut pv,
+                &mut imgs,
                 &mut layout,
                 confirm_all,
                 mode,
@@ -415,7 +419,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             },
             // placements are absolute cells, drop them on resize
             crossterm::event::Event::Resize(_, _) => {
-                preview::clear_media(&mut pv);
+                media::clear(&mut imgs);
             }
             crossterm::event::Event::Mouse(m) => {
                 use crossterm::event::{MouseButton, MouseEventKind};
@@ -628,7 +632,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         if event_key.code == crossterm::event::KeyCode::Char('P') {
                             pv.open = !pv.open;
                             if !pv.open {
-                                preview::clear_media(&mut pv);
+                                media::clear(&mut imgs);
                             }
                         } else if event_key.code == crossterm::event::KeyCode::Char('t') {
                             menu.sel = menu
@@ -811,7 +815,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             _ => {}
         }
     }
-    preview::clear_media(&mut pv);
+    media::clear(&mut imgs);
     crossterm::execute!(
         std::io::stdout(),
         crossterm::event::DisableBracketedPaste,
@@ -988,6 +992,7 @@ fn renderer(
     menu: &ThemeMenu,
     theme_name: &str,
     pv: &mut preview::PreviewState,
+    imgs: &mut media::Media,
     lay: &mut preview::UiLayout,
     quit_all: bool,
     mode: i32,
@@ -1415,28 +1420,25 @@ fn renderer(
         lay.prev_inner = Some(pinner);
 
         let cols = pinner.width;
-        // pass 1: resolve every media ref so row counts are known, then
-        // scroll proportionally like the editor. pass 2 draws the window.
+        // pass 1: measure the rows each image needs so the preview can
+        // scroll in step with the editor. pass 2 draws the visible slice
+        // and hands image rects to the media renderer.
         let mut items: Vec<PreviewItem> = Vec::new();
         let mut row_no = 0usize;
         for row in doc {
-            let media = match &row {
+            let img = match &row {
                 preview::DocRow::Media { path, .. } => {
                     let full = resolve_media_path(path, &dir);
-                    let ok = !full.is_empty()
-                        && std::path::Path::new(&full).exists()
-                        && pv.images
-                        && cols > 4;
-                    if ok {
-                        preview::ensure_media(pv, &full, cols)
+                    if !full.is_empty() && std::path::Path::new(&full).exists() && cols > 4 {
+                        media::rows_for(&full, cols).map(|h| (full, h))
                     } else {
                         None
                     }
                 }
                 _ => None,
             };
-            let height = media.map(|(_, h)| h as usize).unwrap_or(1);
-            items.push((row_no, row, media));
+            let height = img.as_ref().map(|(_, h)| *h as usize).unwrap_or(1);
+            items.push((row_no, row, img));
             row_no += height;
         }
         let doc_rows = row_no;
@@ -1447,10 +1449,10 @@ fn renderer(
         let end = start.saturating_add(view_h);
 
         let mut slice: Vec<Line> = Vec::with_capacity(view_h);
+        let mut draws: Vec<(String, Rect)> = Vec::new();
         let mut cursor_row = 0usize;
-        let mut visibles: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        for (_at, row, media) in items {
-            let height: usize = match &media {
+        for (_at, row, img) in items {
+            let height: usize = match &img {
                 Some((_, h)) => *h as usize,
                 None => 1,
             };
@@ -1459,33 +1461,30 @@ fn renderer(
                 continue;
             }
             if cursor_row >= start {
-                let at = pinner.y + (cursor_row - start) as u16;
                 match row {
                     preview::DocRow::Text(l) => slice.push(l),
                     preview::DocRow::Media { alt, path } => {
-                        let full = resolve_media_path(&path, &dir);
-                        let missing = !std::path::Path::new(&full).exists();
-                        if let Some((id, _)) = media {
-                            if let Some(seq) = preview::media_cell(pv, id, pinner.x, at, cols) {
-                                slice.push(Line::from(Span::raw(seq)));
-                                visibles.insert(id);
-                            } else {
-                                slice.push(Line::from(Span::raw(alt)));
-                            }
-                        } else {
+                        // when the terminal can draw the image we leave
+                        // the row empty so nothing peeks around its edges
+                        if img.is_none() || !imgs.supported() {
                             slice.push(Line::from(vec![
-                                Span::styled("[img ", Style::default().fg(dim).bg(base)),
+                                Span::styled(" [", Style::default().fg(dim).bg(base)),
                                 Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
-                                Span::styled(
-                                    if missing {
-                                        format!(" missing: {}]", path)
-                                    } else {
-                                        format!("]({})", path)
-                                    },
-                                    Style::default().fg(dim).bg(base),
-                                ),
+                                Span::styled(format!("] {}", path), Style::default().fg(dim).bg(base)),
                             ]));
+                        } else {
+                            slice.push(Line::from(""));
                         }
+                        if let Some((full, rows_needed)) = &img
+                            && let Some(rect) = media::preview_rect(
+                                pinner,
+                                cursor_row,
+                                start,
+                                *rows_needed as usize,
+                                view_h,
+                            ) {
+                                draws.push((full.clone(), rect));
+                            }
                         for _ in 1..height.min(view_h) {
                             slice.push(Line::from(""));
                         }
@@ -1498,13 +1497,11 @@ fn renderer(
             slice.push(Line::from(""));
         }
         frame.render_widget(Paragraph::new(Text::from(slice)).bg(base), pinner);
-        // images scrolled out of view get deleted from a scratch cell
-        if !matches!(mode, 401 | 402 | 403 | 12)
-            && let Some(seq) = preview::prune_seq(pv, &visibles)
-        {
-            let x = frame.area().width.saturating_sub(1);
-            let y = frame.area().height.saturating_sub(1);
-            frame.render_widget(preview::EscapeCell(seq), Rect::new(x, y, 1, 1));
+        // images draw above the cells, and never under a modal
+        if !matches!(mode, 401 | 402 | 403 | 12) {
+            for (path, rect) in draws {
+                imgs.draw(frame, &path, rect);
+            }
         }
     }
 

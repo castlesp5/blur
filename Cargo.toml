@@ -9,5 +9,6 @@ crossterm = "0.29.0"
 image = "0.25.10"
 opaline = { version = "0.4.2", features = ["syntect"] }
 ratatui = "0.30.2"
+ratatui-image = { version = "11.1.0", default-features = false }
 syntect = "5.3.0"
 unicode-width = "0.2.2"
