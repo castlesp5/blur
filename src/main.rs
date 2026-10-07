@@ -29,6 +29,26 @@ struct ThemeMenu {
     sel: usize,
 }
 
+/// one preview row: its line index, the parsed row, and the loaded
+/// media behind it when the row is an image.
+type PreviewItem = (usize, preview::DocRow, Option<(u32, u16)>);
+
+/// resolve an image reference against the document directory. absolute
+/// and ~/ paths are used as-is so real files are never mangled into a
+/// "missing" lookup.
+fn resolve_media_path(path: &str, dir: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        match std::env::var("HOME") {
+            Ok(h) => return format!("{h}/{rest}"),
+            Err(_) => return path.to_string(),
+        }
+    }
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    format!("{dir}/{path}")
+}
+
 /// returns false when the theme fails to load, so callers can
 /// retry or stay put instead of silently keeping a half state.
 fn apply_theme(
@@ -157,7 +177,6 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
     let mut pv = preview::PreviewState::new();
-    let mut fout = preview::FrameOut::default();
     let mut layout = preview::UiLayout::default();
     let mut confirm_all = false;
     let mut press: Option<(i32, i32)> = None;
@@ -191,15 +210,12 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 &menu,
                 &theme_name,
                 &mut pv,
-                &mut fout,
                 &mut layout,
                 confirm_all,
                 mode,
                 &the_command_line,
             )
         })?;
-        // kitty images draw above cells, so placements flush after draw
-        preview::flush_media(&mut pv, &fout.placements, fout.cursor);
         let tab = &mut tabs[tab_selector];
 
         let event = crossterm::event::read()?;
@@ -248,16 +264,16 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         && cy < area.y + area.height - 1
                     {
                         let r = (cy - area.y - 1) as usize;
-                                if r < rows && !menu.names.is_empty() {
-                                    menu.sel = (top + r).min(menu.names.len() - 1);
-                                    if let Some(name) = menu.names.get(menu.sel).cloned()
-                                        && apply_theme(&mut theme, &mut highlighter, &mut tabs, &name)
-                                    {
-                                        theme_name = name;
-                                        save_config_theme(&theme_name);
-                                        mode = 0;
-                                    }
-                                }
+                        if r < rows && !menu.names.is_empty() {
+                            menu.sel = (top + r).min(menu.names.len() - 1);
+                            if let Some(name) = menu.names.get(menu.sel).cloned()
+                                && apply_theme(&mut theme, &mut highlighter, &mut tabs, &name)
+                            {
+                                theme_name = name;
+                                save_config_theme(&theme_name);
+                                mode = 0;
+                            }
+                        }
                     }
                 } else if matches!(mode, 401 | 402) {
                     if matches!(m.kind, MouseEventKind::Down(_)) {
@@ -481,8 +497,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                                 // on preview state. on failure the picker
                                 // stays open instead of going half broken.
                                 if let Some(name) = menu.names.get(menu.sel).cloned() {
-                                    if apply_theme(&mut theme, &mut highlighter, &mut tabs, &name)
-                                    {
+                                    if apply_theme(&mut theme, &mut highlighter, &mut tabs, &name) {
                                         theme_name = name;
                                         save_config_theme(&theme_name);
                                         mode = 0;
@@ -693,7 +708,6 @@ fn renderer(
     menu: &ThemeMenu,
     theme_name: &str,
     pv: &mut preview::PreviewState,
-    fout: &mut preview::FrameOut,
     lay: &mut preview::UiLayout,
     quit_all: bool,
     mode: i32,
@@ -716,7 +730,6 @@ fn renderer(
     ])
     .split(frame.area());
     let (tab_area, edit_area, status_area) = (areas[0], areas[1], areas[2]);
-    fout.placements.clear();
 
     // side preview for markdown when the screen is wide enough
     let lower = tab.file_name.to_lowercase();
@@ -1067,75 +1080,96 @@ fn renderer(
         lay.prev_inner = Some(pinner);
 
         let cols = pinner.width;
-        let mut plines: Vec<Line> = Vec::new();
-        let mut medias: Vec<(u32, usize)> = Vec::new();
+        // pass 1: resolve every media ref so row counts are known, then
+        // scroll proportionally like the editor. pass 2 draws the window.
+        let mut items: Vec<PreviewItem> = Vec::new();
+        let mut row_no = 0usize;
         for row in doc {
-            match row {
-                preview::DocRow::Text(l) => plines.push(l),
-                preview::DocRow::Media { alt, path } => {
-                    // absolute refs stay absolute, ~/ expands, the rest
-                    // joins the file dir. the old dir-prefix-everything
-                    // mangled absolute paths into missing files.
-                    let full = if let Some(rest) = path.strip_prefix("~/") {
-                        match std::env::var("HOME") {
-                            Ok(h) => format!("{h}/{rest}"),
-                            Err(_) => path.clone(),
-                        }
-                    } else if path.starts_with('/') {
-                        path.clone()
-                    } else {
-                        format!("{dir}/{path}")
-                    };
-                    let missing = !std::path::Path::new(&full).exists();
-                    // placeholder always draws: the image covers it where
-                    // the protocol works, text remains everywhere else.
-                    plines.push(Line::from(vec![
-                        Span::styled("[img ", Style::default().fg(dim).bg(base)),
-                        Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
-                        Span::styled(
-                            if missing {
-                                format!(" missing: {}]", path)
-                            } else {
-                                format!("]({})", path)
-                            },
-                            Style::default().fg(dim).bg(base),
-                        ),
-                    ]));
-                    if !missing
+            let media = match &row {
+                preview::DocRow::Media { path, .. } => {
+                    let full = resolve_media_path(path, &dir);
+                    let ok = !full.is_empty()
+                        && std::path::Path::new(&full).exists()
                         && preview::kitty_supported()
-                        && cols > 4
-                        && pinner.height > 0
-                        && let Some((id, rows)) = preview::ensure_media(pv, &full, cols)
-                    {
-                        medias.push((id, plines.len() - 1));
-                        for _ in 1..rows {
-                            plines.push(Line::from(""));
+                        && cols > 4;
+                    if ok {
+                        preview::ensure_media(pv, &full, cols)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let height = media.map(|(_, h)| h as usize).unwrap_or(1);
+            items.push((row_no, row, media));
+            row_no += height;
+        }
+        let doc_rows = row_no;
+        let view_h = pinner.height as usize;
+        let denom = total.saturating_sub(inner.height as usize).max(1);
+        let frac = (tab.scroll_y as usize).min(denom) as f64 / denom as f64;
+        let start = (frac * doc_rows.saturating_sub(view_h) as f64) as usize;
+        let end = start.saturating_add(view_h);
+
+        let mut slice: Vec<Line> = Vec::with_capacity(view_h);
+        let mut cursor_row = 0usize;
+        let mut visibles: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for (_at, row, media) in items {
+            let height: usize = match &media {
+                Some((_, h)) => *h as usize,
+                None => 1,
+            };
+            if cursor_row >= end {
+                cursor_row += height;
+                continue;
+            }
+            if cursor_row >= start {
+                let at = pinner.y + (cursor_row - start) as u16;
+                match row {
+                    preview::DocRow::Text(l) => slice.push(l),
+                    preview::DocRow::Media { alt, path } => {
+                        let full = resolve_media_path(&path, &dir);
+                        let missing = !std::path::Path::new(&full).exists();
+                        if let Some((id, _)) = media {
+                            if let Some(seq) = preview::media_cell(pv, id, pinner.x, at, cols) {
+                                slice.push(Line::from(Span::raw(seq)));
+                                visibles.insert(id);
+                            } else {
+                                slice.push(Line::from(Span::raw(alt)));
+                            }
+                        } else {
+                            slice.push(Line::from(vec![
+                                Span::styled("[img ", Style::default().fg(dim).bg(base)),
+                                Span::styled(alt, Style::default().fg(textc).bg(base).bold()),
+                                Span::styled(
+                                    if missing {
+                                        format!(" missing: {}]", path)
+                                    } else {
+                                        format!("]({})", path)
+                                    },
+                                    Style::default().fg(dim).bg(base),
+                                ),
+                            ]));
+                        }
+                        for _ in 1..height.min(view_h) {
+                            slice.push(Line::from(""));
                         }
                     }
                 }
             }
+            cursor_row += height;
         }
-        // proportional scroll follows the editor
-        let view_h = pinner.height as usize;
-        let denom = total.saturating_sub(inner.height as usize).max(1);
-        let frac = (tab.scroll_y as usize).min(denom) as f64 / denom as f64;
-        let start = (frac * plines.len().saturating_sub(view_h) as f64) as usize;
-        let end = start.saturating_add(view_h);
-        let slice: Vec<Line> = plines.into_iter().skip(start).take(view_h).collect();
+        while slice.len() < view_h {
+            slice.push(Line::from(""));
+        }
         frame.render_widget(Paragraph::new(Text::from(slice)).bg(base), pinner);
-        // kitty draws above cells, so no placements under modals
-        let modal = matches!(mode, 401 | 402 | 403 | 12);
-        if !modal {
-            for (id, row) in medias {
-                if row >= start && row < end {
-                    fout.placements.push(preview::Placement {
-                        id,
-                        x: pinner.x,
-                        y: pinner.y + (row - start) as u16,
-                        cols,
-                    });
-                }
-            }
+        // images scrolled out of view get deleted from a scratch cell
+        if !matches!(mode, 401 | 402 | 403 | 12)
+            && let Some(seq) = preview::prune_seq(pv, &visibles)
+        {
+            let x = frame.area().width.saturating_sub(1);
+            let y = frame.area().height.saturating_sub(1);
+            frame.render_widget(preview::EscapeCell(seq), Rect::new(x, y, 1, 1));
         }
     }
 
@@ -1368,12 +1402,11 @@ fn renderer(
         }
     }
 
-    // cursor inside the rounded box, mirrored for post-draw media flush
-    fout.cursor = (
+    // cursor sits exactly on the cell under edit
+    frame.set_cursor_position((
         inner.x + gutter_w + visual_x.saturating_sub(tab.scroll_x),
         inner.y + (tab.cursor_y as u16).saturating_sub(tab.scroll_y),
-    );
-    frame.set_cursor_position(fout.cursor);
+    ));
     if mode == 10 || mode == 11 {
         let prefix = if mode == 10 { "save: " } else { "open: " };
         // cells before typed text:  + pill +  + space + file glyph
@@ -1385,7 +1418,6 @@ fn renderer(
             + UnicodeWidthStr::width(fgly) as u16
             + UnicodeWidthStr::width(prefix) as u16
             + UnicodeWidthStr::width(the_command_line) as u16;
-        fout.cursor = (x, status_area.y);
-        frame.set_cursor_position(fout.cursor);
+        frame.set_cursor_position((x, status_area.y));
     }
 }

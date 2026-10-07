@@ -30,8 +30,9 @@ pub struct PreviewState {
     pub next_id: u32,
     /// ids transmitted to the terminal this session
     pub sent: HashSet<u32>,
-    /// ids placed on screen last frame, diffed for cleanup
-    pub shown: Vec<u32>,
+    /// id -> cell it is currently placed at, so moves re-place instead
+    /// of stacking placements forever
+    pub placed: HashMap<u32, (u16, u16)>,
 }
 
 impl PreviewState {
@@ -43,28 +44,9 @@ impl PreviewState {
             dims: HashMap::new(),
             next_id: 1,
             sent: HashSet::new(),
-            shown: Vec::new(),
+            placed: HashMap::new(),
         }
     }
-
-    pub fn forget(&mut self, id: u32) {
-        self.sent.remove(&id);
-    }
-}
-
-/// one image placement computed during layout, flushed after draw.
-pub struct Placement {
-    pub id: u32,
-    pub x: u16,
-    pub y: u16,
-    pub cols: u16,
-}
-
-/// renderer output: final cursor cell plus kitty placements to flush.
-#[derive(Default)]
-pub struct FrameOut {
-    pub cursor: (u16, u16),
-    pub placements: Vec<Placement>,
 }
 
 /// clickable layout snapshot from the last frame. mouse events map
@@ -180,120 +162,156 @@ fn rows_for(dims: Option<(u32, u32)>, cols: u16) -> u16 {
 /// terminals speaking the kitty graphics protocol: kitty itself,
 /// wezterm, and ghostty. everything else gets text placeholders.
 pub fn kitty_supported() -> bool {
-    if std::env::var_os("KITTY_WINDOW_ID").is_some() {
-        return true;
-    }
-    if std::env::var("TERM").unwrap_or_default().contains("kitty") {
-        return true;
-    }
-    // inside tmux or screen the outer terminal may still speak kitty
-    // graphics. unknown APC sequences are ignored elsewhere, and a
-    // text placeholder sits behind every image, so attempting is safe.
-    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() {
-        return true;
-    }
-    matches!(
-        std::env::var("TERM_PROGRAM").as_deref(),
-        Ok("WezTerm") | Ok("ghostty")
-    )
+    let known_outer = std::env::var_os("KITTY_WINDOW_ID").is_some()
+        || std::env::var("TERM").unwrap_or_default().contains("kitty")
+        || matches!(
+            std::env::var("TERM_PROGRAM").as_deref(),
+            Ok("WezTerm") | Ok("ghostty")
+        );
+    // inside tmux or screen the env vars still describe the outer
+    // terminal. if that one is not known to speak the protocol we stay
+    // on text placeholders, since passthrough would otherwise dump raw
+    // escape text onto the screen.
+    known_outer
 }
 
-/// wrap an escape for tmux passthrough when nested in tmux.
-fn wrap(cmd: &str) -> String {
+/// wrap escape sequences for tmux passthrough when nested inside tmux.
+/// screen needs the same envelope under its own prefix.
+fn wrap(seq: &str) -> String {
     if std::env::var_os("TMUX").is_some() {
-        format!("\x1bPtmux;\x1b{}\x1b\\", cmd.replace('\x1b', "\x1b\x1b"))
+        format!("\x1bPtmux;\x1b{}\x1b\\", seq.replace('\x1b', "\x1b\x1b"))
+    } else if std::env::var_os("STY").is_some() {
+        format!("\x1bP\x1b{}\x1b\\", seq.replace('\x1b', "\x1b\x1b"))
     } else {
-        cmd.to_string()
+        seq.to_string()
     }
 }
 
-fn emit(out: &mut impl Write, s: &str) {
-    let _ = out.write_all(wrap(s).as_bytes());
-}
-
-/// transmit cached png bytes, chunked base64, replies silenced with q=2.
-/// a lone chunk terminates with m=0, otherwise the terminal waits forever.
-pub fn kitty_transmit(out: &mut impl Write, id: u32, png: &[u8]) {
+/// transmit chunks as one string. replies silenced with q=2, and the
+/// last chunk always terminates with m=0 or the terminal parser hangs.
+pub fn transmit_seq(id: u32, png: &[u8]) -> String {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     if png.is_empty() {
-        return;
+        return String::new();
     }
     let b64 = STANDARD.encode(png);
     let bytes = b64.as_bytes();
     let total = bytes.chunks(4096).len().max(1);
+    let mut out = String::new();
     for (n, chunk) in bytes.chunks(4096).enumerate() {
         let more = usize::from(n + 1 < total);
-        emit(
-            out,
-            &format!(
-                "\x1b_Ga=t,f=100,i={},m={},q=2;{}\x1b\\",
-                id,
-                more,
-                String::from_utf8_lossy(chunk)
-            ),
-        );
+        out.push_str(&format!(
+            "\x1b_Ga=t,f=100,i={},m={},q=2;{}\x1b\\",
+            id,
+            more,
+            String::from_utf8_lossy(chunk)
+        ));
     }
+    out
 }
 
-/// place a transmitted image at the cursor, width in cells, aspect kept.
-pub fn kitty_place(out: &mut impl Write, id: u32, cols: u16) {
-    emit(out, &format!("\x1b_Ga=p,i={},c={},q=2\x1b\\", id, cols));
+/// place a transmitted image at the cursor, width in cells.
+pub fn place_seq(id: u32, cols: u16) -> String {
+    format!("\x1b_Ga=p,i={},c={},q=2\x1b\\", id, cols)
 }
 
-/// delete an image and all its placements.
-pub fn kitty_delete(out: &mut impl Write, id: u32) {
-    emit(out, &format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", id));
+/// delete an image and every placement of it.
+pub fn delete_seq(id: u32) -> String {
+    format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", id)
 }
 
-/// diff placements against last frame, transmit new ones, place visible
-/// ones, delete stale ones, then park the cursor back on the editor.
-pub fn flush_media(state: &mut PreviewState, placements: &[Placement], cursor: (u16, u16)) {
+/// everything needed to draw one image at one cell. written into the
+/// ratatui buffer as a cell symbol so it rides the same write stream as
+/// the text. writing escapes straight to stdout desynchronises ratatui's
+/// diff renderer and garbles the screen.
+pub fn media_cell(state: &mut PreviewState, id: u32, x: u16, y: u16, cols: u16) -> Option<String> {
     if !kitty_supported() {
-        return;
+        return None;
     }
-    let out = std::io::stdout();
-    let mut lock = out.lock();
-    let cur: HashSet<u32> = placements.iter().map(|p| p.id).collect();
-    let stale: Vec<u32> = state
-        .shown
-        .drain(..)
-        .filter(|id| !cur.contains(id))
-        .collect();
-    for id in stale {
-        kitty_delete(&mut lock, id);
-        state.forget(id);
+    let moved = state.placed.get(&id).copied() != Some((x, y));
+    if state.sent.contains(&id) && !moved {
+        return None;
     }
-    // crossterm cursor moves interleave safely after ratatui's draw flush
-    for p in placements {
-        if !state.sent.contains(&p.id)
-            && let Some(png) = state.png.get(&p.id).cloned()
-        {
-            kitty_transmit(&mut lock, p.id, &png);
-            state.sent.insert(p.id);
+    let mut seq = String::new();
+    if !state.sent.contains(&id)
+        && let Some(png) = state.png.get(&id)
+    {
+        seq.push_str(&transmit_seq(id, png));
+        state.sent.insert(id);
+    }
+    if moved {
+        // clear the old placement first so scrolling never stacks copies
+        if state.placed.contains_key(&id) {
+            seq.push_str(&delete_seq(id));
         }
-        let _ = crossterm::execute!(lock, crossterm::cursor::MoveTo(p.x, p.y),);
-        kitty_place(&mut lock, p.id, p.cols);
+        seq.push_str(&place_seq(id, cols));
+        state.placed.insert(id, (x, y));
     }
-    let _ = crossterm::execute!(lock, crossterm::cursor::MoveTo(cursor.0, cursor.1),);
-    let _ = lock.flush();
-    state.shown = placements.iter().map(|p| p.id).collect();
+    if seq.is_empty() {
+        None
+    } else {
+        Some(wrap(&seq))
+    }
 }
 
-/// drop every placement, used on close, resize, and exit.
+/// delete sequences for images that scrolled out of view. returned as
+/// one string so they can ride a single scratch cell.
+pub fn prune_seq(state: &mut PreviewState, visible: &HashSet<u32>) -> Option<String> {
+    if !kitty_supported() {
+        return None;
+    }
+    let stale: Vec<u32> = state
+        .placed
+        .keys()
+        .copied()
+        .filter(|id| !visible.contains(id))
+        .collect();
+    if stale.is_empty() {
+        return None;
+    }
+    let mut seq = String::new();
+    for id in stale {
+        seq.push_str(&delete_seq(id));
+        state.placed.remove(&id);
+    }
+    Some(wrap(&seq))
+}
+
+/// drop every placement and transmitted image, used on close, resize,
+/// and exit. called outside a frame, so a direct write is safe here.
 pub fn clear_media(state: &mut PreviewState) {
     if !kitty_supported() {
-        state.shown.clear();
+        state.placed.clear();
         state.sent.clear();
         return;
     }
-    let out = std::io::stdout();
-    let mut lock = out.lock();
-    let stale: Vec<u32> = std::mem::take(&mut state.shown);
-    for id in stale {
-        kitty_delete(&mut lock, id);
-        state.forget(id);
+    let mut seq = String::new();
+    for id in state.placed.keys().copied().collect::<Vec<_>>() {
+        seq.push_str(&delete_seq(id));
+        state.placed.remove(&id);
     }
-    let _ = lock.flush();
+    for id in state.sent.iter().copied().collect::<Vec<_>>() {
+        seq.push_str(&delete_seq(id));
+        state.sent.remove(&id);
+    }
+    if !seq.is_empty() {
+        let out = std::io::stdout();
+        let mut lock = out.lock();
+        let _ = lock.write_all(wrap(&seq).as_bytes());
+        let _ = lock.flush();
+    }
+}
+
+/// writes an escape sequence into one buffer cell so ratatui emits it
+/// in the same pass as the rest of the frame.
+pub struct EscapeCell(pub String);
+
+impl ratatui::widgets::Widget for EscapeCell {
+    fn render(self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
+        if let Some(cell) = buf.cell_mut((area.x, area.y)) {
+            cell.set_symbol(&self.0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -608,12 +626,10 @@ mod tests {
     #[test]
     fn transmit_chunks_reassemble() {
         let png = vec![0u8; 9000];
-        let mut out = Vec::new();
-        kitty_transmit(&mut out, 7, &png);
-        let s = String::from_utf8(out).unwrap();
-        assert!(s.starts_with("\x1b_Ga=t,f=100,i=7,m=1,q=2;"));
-        assert!(s.contains(",m=0,q=2;"), "last chunk must close with m=0");
-        let payload: String = s
+        let seq = transmit_seq(7, &png);
+        assert!(seq.starts_with("\x1b_Ga=t,f=100,i=7,m=1,q=2;"));
+        assert!(seq.contains(",m=0,q=2;"), "last chunk must close with m=0");
+        let payload: String = seq
             .split(';')
             .skip(1)
             .collect::<Vec<_>>()
@@ -623,23 +639,20 @@ mod tests {
     }
 
     #[test]
-    fn place_and_delete_format() {
-        let mut out = Vec::new();
-        kitty_place(&mut out, 3, 40);
-        kitty_delete(&mut out, 3);
-        let s = String::from_utf8(out).unwrap();
-        assert!(s.contains("\x1b_Ga=p,i=3,c=40,q=2\x1b\\"));
-        assert!(s.contains("\x1b_Ga=d,d=I,i=3,q=2\x1b\\"));
+    fn single_chunk_terminates() {
+        let seq = transmit_seq(9, &[1u8; 100]);
+        assert!(seq.contains(",m=0,q=2;"), "lone chunk must terminate");
+        assert!(!seq.contains(",m=1,"), "no continuation expected");
+        assert!(
+            transmit_seq(9, &[]).is_empty(),
+            "empty payload sends nothing"
+        );
     }
 
     #[test]
-    fn single_chunk_terminates() {
-        let png = vec![1u8; 100];
-        let mut out = Vec::new();
-        kitty_transmit(&mut out, 9, &png);
-        let s = String::from_utf8(out).unwrap();
-        assert!(s.contains(",m=0,q=2;"), "lone chunk must terminate");
-        assert!(!s.contains(",m=1,"), "no continuation expected");
+    fn place_and_delete_format() {
+        assert_eq!(place_seq(3, 40), "\x1b_Ga=p,i=3,c=40,q=2\x1b\\");
+        assert_eq!(delete_seq(3), "\x1b_Ga=d,d=I,i=3,q=2\x1b\\");
     }
 
     #[test]
