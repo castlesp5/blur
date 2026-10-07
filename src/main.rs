@@ -561,8 +561,7 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             if confirm_all {
                                 break;
                             }
-                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
-                            {
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close) {
                                 CloseOutcome::Closed => mode = 0,
                                 CloseOutcome::Home => go_home = true,
                                 CloseOutcome::Quit => break,
@@ -818,8 +817,7 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                         )
                         .unwrap()
                         {
-                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
-                            {
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close) {
                                 CloseOutcome::Closed => mode = 0,
                                 CloseOutcome::Home => go_home = true,
                                 CloseOutcome::Quit => break,
@@ -878,8 +876,7 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                             if confirm_all {
                                 break;
                             }
-                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close)
-                            {
+                            match close_current_tab(&mut tabs, &mut tab_selector, home_on_close) {
                                 CloseOutcome::Closed => mode = 0,
                                 CloseOutcome::Home => go_home = true,
                                 CloseOutcome::Quit => break,
