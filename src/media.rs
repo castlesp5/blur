@@ -51,14 +51,14 @@ pub fn picker(images: Images) -> Option<Picker> {
         // off means off, whatever the environment claims
         Some(false) => None,
         // on means trust the user, they configured passthrough if needed
-        Some(true) => Some(kitty_picker()),
+        Some(true) => kitty_picker(),
         None => {
             if in_multiplexer() {
                 // the outer terminal is invisible to us, and asking for
                 // passthrough that is not there prints escape garbage
                 None
             } else if trusted_terminal() {
-                Some(kitty_picker())
+                kitty_picker()
             } else {
                 None
             }
@@ -66,10 +66,23 @@ pub fn picker(images: Images) -> Option<Picker> {
     }
 }
 
-fn kitty_picker() -> Picker {
-    let mut p = Picker::halfblocks();
+/// build the picker behind a hard deadline.
+///
+/// every `Picker` constructor shells out to `tmux set -p
+/// allow-passthrough on` and blocks on `child.wait()` when it thinks it
+/// is inside tmux. if that call stalls, the editor never starts. the
+/// builder only reads environment and spawns a child with null stdio,
+/// so abandoning it costs nothing.
+fn kitty_picker() -> Option<Picker> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut p = Picker::halfblocks();
+        p.set_protocol_type(ProtocolType::Kitty);
+        let _ = tx.send(p);
+    });
+    let mut p = rx.recv_timeout(std::time::Duration::from_millis(400)).ok()?;
     p.set_protocol_type(ProtocolType::Kitty);
-    p
+    Some(p)
 }
 
 fn in_multiplexer() -> bool {
@@ -247,7 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_opt_in_always_builds_a_picker() {
-        assert!(picker(Images::from_config(Some(true))).is_some());
+    fn building_a_picker_always_returns_quickly() {
+        // the tmux probe inside the picker constructor is the thing that
+        // used to freeze startup, so the deadline is the guarantee
+        let start = std::time::Instant::now();
+        let built = kitty_picker();
+        assert!(start.elapsed() < std::time::Duration::from_millis(1500));
+        assert!(built.is_some());
     }
 }

@@ -142,6 +142,8 @@ Images display inline through the kitty graphics protocol on kitty, WezTerm, and
 
 Every other terminal gets a clean `[alt] path` placeholder instead of raw escape codes. Set `images = true` in the config to force images on, which is what you want inside tmux or screen with `allow-passthrough` configured. `images = false` turns them off.
 
+Image support is prepared behind a short deadline, so a slow or stalled terminal multiplexer can never delay or block startup.
+
 ## Syntax highlighting
 
 Highlighting uses `syntect` with the `catppuccin-mocha` theme. Lines are fed to the parser with their terminator, so comment and string scopes close correctly at the end of a line. Detection runs in layers, so it works for named files, unsaved buffers, and scripts with no extension:
