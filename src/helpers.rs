@@ -61,6 +61,49 @@ pub fn tok(theme: &opaline::Theme, key: &str) -> opaline::OpalineColor {
         .unwrap_or_else(|| theme.color("text.primary"))
 }
 
+/// blend a color toward the theme background. ratatui and terminals
+/// have no alpha channel, so translucent colors are pre-multiplied
+/// here instead of being silently ignored.
+pub fn blend(
+    fg: opaline::OpalineColor,
+    bg: opaline::OpalineColor,
+    alpha: f32,
+) -> opaline::OpalineColor {
+    let a = alpha.clamp(0.0, 1.0);
+    let mix = |f: u8, b: u8| {
+        ((f as f32 * a) + (b as f32 * (1.0 - a)))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    opaline::OpalineColor {
+        r: mix(fg.r, bg.r),
+        g: mix(fg.g, bg.g),
+        b: mix(fg.b, bg.b),
+    }
+}
+
+/// translucent color over the theme background, ready for ratatui.
+pub fn fade(theme: &opaline::Theme, c: opaline::OpalineColor, alpha: f32) -> ratatui::style::Color {
+    blend(c, theme.color("bg.base"), alpha).into()
+}
+
+/// same, for a color already converted to ratatui.
+pub fn fade_rgb(
+    theme: &opaline::Theme,
+    c: ratatui::style::Color,
+    alpha: f32,
+) -> ratatui::style::Color {
+    match c {
+        ratatui::style::Color::Rgb(r, g, b) => blend(
+            opaline::OpalineColor { r, g, b },
+            theme.color("bg.base"),
+            alpha,
+        )
+        .into(),
+        other => other,
+    }
+}
+
 pub fn fg_color(bg: opaline::OpalineColor) -> ratatui::style::Color {
     let to_linear = |c: u8| {
         let c = c as f64 / 255.0;

@@ -83,7 +83,8 @@ cargo build --release
 ## Mouse
 
 - Click to place the cursor, drag to select
-- Click a tab to switch, click a theme row to apply
+- Click a tab to switch, click its `×` or middle-click it to close
+- Click a theme row to apply
 - Click the left half of the confirm dialog to quit
 - Scroll to scroll either pane
 
@@ -93,9 +94,12 @@ cargo build --release
 
 ```toml
 theme = "catppuccin-mocha"
+images = false
 ```
 
-Written when a theme is applied, read at startup.
+Written when a theme is applied, read at startup. Unknown keys are ignored.
+
+Terminal images are off unless enabled here or with `BLUR_KITTY=1`, because guessing terminal support wrong prints raw escape text on screen.
 
 ## Markdown preview
 

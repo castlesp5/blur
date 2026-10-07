@@ -21,6 +21,8 @@ const MAX_IMG_ROWS: u16 = 14;
 
 pub struct PreviewState {
     pub open: bool,
+    /// user opted into terminal image rendering
+    pub images: bool,
     /// absolute image path -> kitty image id
     pub media: HashMap<String, u32>,
     /// image id -> resized png bytes, kept for re-transmit after deletes
@@ -39,6 +41,7 @@ impl PreviewState {
     pub fn new() -> Self {
         Self {
             open: false,
+            images: false,
             media: HashMap::new(),
             png: HashMap::new(),
             dims: HashMap::new(),
@@ -63,6 +66,10 @@ pub struct UiLayout {
     pub tab_y: u16,
     /// tab pill x-ranges with real tab indices
     pub tab_pills: Vec<(u16, u16, usize)>,
+    /// close button x-ranges per tab
+    pub tab_close: Vec<(u16, u16, usize)>,
+    /// last pointer position, drives hover states
+    pub mouse: Option<(u16, u16)>,
     /// theme picker popup: area, first row, row count
     pub picker: Option<(ratatui::layout::Rect, usize, usize)>,
     /// confirm modal area, left half confirms
@@ -161,28 +168,19 @@ fn rows_for(dims: Option<(u32, u32)>, cols: u16) -> u16 {
 
 /// terminals speaking the kitty graphics protocol: kitty itself,
 /// wezterm, and ghostty. everything else gets text placeholders.
-pub fn kitty_supported() -> bool {
-    // opt in explicitly, mainly for multiplexer users who have
-    // passthrough enabled and want images
-    if std::env::var("BLUR_KITTY")
-        .unwrap_or_default()
-        .eq_ignore_ascii_case("1")
-    {
-        return true;
-    }
-    let in_multiplexer = std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some();
-    // under tmux or screen the protocol only works with passthrough on.
-    // without it the terminal prints the wrapped escape as plain text,
-    // so stay on placeholders rather than corrupting the screen.
-    if in_multiplexer {
-        return false;
-    }
-    std::env::var_os("KITTY_WINDOW_ID").is_some()
-        || std::env::var("TERM").unwrap_or_default().contains("kitty")
-        || matches!(
-            std::env::var("TERM_PROGRAM").as_deref(),
-            Ok("WezTerm") | Ok("ghostty")
-        )
+/// images are strictly opt in. terminal identification is unreliable:
+/// tmux and screen print passthrough as text when passthrough is off,
+/// and several terminals advertise kitty in TERM without speaking the
+/// protocol. guessing wrong dumps raw escape bytes onto the screen, so
+/// blur only emits the protocol when the user asks for it, through the
+/// config file or BLUR_KITTY.
+pub fn images_enabled() -> bool {
+    std::env::var("BLUR_KITTY")
+        .map(|v| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false)
 }
 
 /// wrap escape sequences for tmux passthrough when nested inside tmux.
@@ -235,7 +233,7 @@ pub fn delete_seq(id: u32) -> String {
 /// the text. writing escapes straight to stdout desynchronises ratatui's
 /// diff renderer and garbles the screen.
 pub fn media_cell(state: &mut PreviewState, id: u32, x: u16, y: u16, cols: u16) -> Option<String> {
-    if !kitty_supported() {
+    if !state.images {
         return None;
     }
     let moved = state.placed.get(&id).copied() != Some((x, y));
@@ -267,7 +265,7 @@ pub fn media_cell(state: &mut PreviewState, id: u32, x: u16, y: u16, cols: u16) 
 /// delete sequences for images that scrolled out of view. returned as
 /// one string so they can ride a single scratch cell.
 pub fn prune_seq(state: &mut PreviewState, visible: &HashSet<u32>) -> Option<String> {
-    if !kitty_supported() {
+    if !state.images {
         return None;
     }
     let stale: Vec<u32> = state
@@ -290,7 +288,7 @@ pub fn prune_seq(state: &mut PreviewState, visible: &HashSet<u32>) -> Option<Str
 /// drop every placement and transmitted image, used on close, resize,
 /// and exit. called outside a frame, so a direct write is safe here.
 pub fn clear_media(state: &mut PreviewState) {
-    if !kitty_supported() {
+    if !state.images {
         state.placed.clear();
         state.sent.clear();
         return;

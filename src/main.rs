@@ -5,7 +5,7 @@ mod normal_mode;
 mod preview;
 mod select_modes;
 
-use helpers::{Highlighter, Tab, Visual, fg_color, hue, tok};
+use helpers::{Highlighter, Tab, Visual, fade, fade_rgb, fg_color, hue, tok};
 use normal_mode::normal_mode;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::*;
@@ -97,31 +97,37 @@ fn config_path() -> Option<std::path::PathBuf> {
     Some(base.join("blur").join("config.toml"))
 }
 
-fn load_config_theme() -> Option<String> {
-    let text = std::fs::read_to_string(config_path()?).ok()?;
+/// tiny reader for the flat config file. unknown keys and bad values
+/// are ignored rather than fatal, so a typo never breaks startup.
+fn load_config() -> (Option<String>, bool) {
+    let mut theme = None;
+    let mut images = preview::images_enabled();
+    let text = match config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(t) => t,
+        None => return (None, images),
+    };
     for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
             continue;
         }
-        let Some(rest) = line.strip_prefix("theme") else {
+        let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let Some(rest) = rest.trim_start().strip_prefix('=') else {
-            continue;
-        };
-        let Some(name) = rest
-            .trim()
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-        else {
-            continue;
-        };
-        if opaline::load_by_name(name).is_some() {
-            return Some(name.to_string());
+        let value = value.trim().trim_matches('"');
+        match key.trim() {
+            "theme" => {
+                if opaline::load_by_name(value).is_some() {
+                    theme = Some(value.to_string());
+                }
+            }
+            "images" => {
+                images = matches!(value, "1" | "true" | "on");
+            }
+            _ => {}
         }
     }
-    None
+    (theme, images)
 }
 
 fn save_config_theme(name: &str) {
@@ -153,7 +159,8 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         crossterm::event::EnableMouseCapture,
     )?;
     let args: Vec<String> = std::env::args().collect();
-    let mut theme_name = load_config_theme().unwrap_or_else(|| String::from("catppuccin-mocha"));
+    let (cfg_theme, cfg_images) = load_config();
+    let mut theme_name = cfg_theme.unwrap_or_else(|| String::from("catppuccin-mocha"));
     let mut theme = opaline::load_by_name(&theme_name).unwrap();
     let mut theme_prev = theme_name.clone();
 
@@ -177,6 +184,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut the_command_line = String::new();
     let mut filled_now = String::new();
     let mut pv = preview::PreviewState::new();
+    pv.images = cfg_images;
     let mut layout = preview::UiLayout::default();
     let mut confirm_all = false;
     let mut press: Option<(i32, i32)> = None;
@@ -233,6 +241,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             crossterm::event::Event::Mouse(m) => {
                 use crossterm::event::{MouseButton, MouseEventKind};
                 let (cx, cy) = (m.column, m.row);
+                layout.mouse = Some((cx, cy));
                 let hit =
                     |r: Rect| cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height;
                 if mode == 403 {
@@ -281,12 +290,46 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                 } else if matches!(mode, 0..=3) {
                     if cy == layout.tab_y {
-                        if let Some((_, _, idx)) = layout
-                            .tab_pills
+                        // the close cell wins over selecting the tab, and
+                        // middle click anywhere on a pill closes it
+                        let on_close = layout
+                            .tab_close
                             .iter()
                             .find(|(x0, x1, _)| cx >= *x0 && cx < *x1)
-                        {
-                            tab_selector = *idx;
+                            .map(|(_, _, i)| *i);
+                        let middle = matches!(m.kind, MouseEventKind::Down(MouseButton::Middle));
+                        let left = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
+                        let target = if left {
+                            on_close.or_else(|| {
+                                layout
+                                    .tab_pills
+                                    .iter()
+                                    .find(|(x0, x1, _)| cx >= *x0 && cx < *x1)
+                                    .map(|(_, _, i)| *i)
+                            })
+                        } else if middle {
+                            layout
+                                .tab_pills
+                                .iter()
+                                .find(|(x0, x1, _)| cx >= *x0 && cx < *x1)
+                                .map(|(_, _, i)| *i)
+                        } else {
+                            None
+                        };
+                        if let Some(mut i) = target {
+                            if Some(i) == on_close || middle {
+                                if !tabs[i].saved {
+                                    confirm_all = false;
+                                    mode = 403;
+                                } else if drop_current_tab(&mut tabs, &mut i) {
+                                    break;
+                                } else {
+                                    tab_selector = tab_selector.min(tabs.len() - 1);
+                                    mode = 0;
+                                }
+                            } else {
+                                tab_selector = i;
+                            }
                             press = None;
                         }
                     } else {
@@ -798,57 +841,88 @@ fn renderer(
     let active_idx = before.len();
     let paths: Vec<&str> = all.iter().map(|t| t.file_name.as_str()).collect();
     let names = tab_display_names(&paths);
-    let pills: Vec<(Vec<Span>, usize)> = all
+    // pill: index badge, file icon, name, state dot, close affordance.
+    // the close cell is always reserved so hovering never shifts layout.
+    let hover = lay.mouse;
+    let _ = hover;
+    let show_closers = all.len() > 1;
+    let pills: Vec<(Vec<Span>, usize, u16)> = all
         .iter()
         .enumerate()
         .map(|(i, t)| {
             let active = i == active_idx;
-            let name = shorten_middle(&names[i], 24);
+            let name = shorten_middle(&names[i], 22);
             let (glyph, _) = file_icon(&t.file_name);
-            let mut spans = Vec::new();
+            let mut spans: Vec<Span> = Vec::new();
+            let mut w = 0usize;
+            let close_at;
             if active {
-                spans.push(Span::styled("", Style::default().fg(mcolor).bg(base)));
+                let fg = fg_color(hue(theme, mode_key));
+                spans.push(Span::styled(
+                    "\u{e0b6}",
+                    Style::default().fg(mcolor).bg(base),
+                ));
+                w += 1;
                 spans.push(Span::styled(
                     format!(" {} ", i + 1),
-                    Style::default()
-                        .fg(fg_color(hue(theme, mode_key)))
-                        .bg(mcolor)
-                        .bold(),
+                    Style::default().fg(fg).bg(mcolor).bold(),
                 ));
-                spans.push(Span::styled(
-                    glyph,
-                    Style::default()
-                        .fg(fg_color(hue(theme, mode_key)))
-                        .bg(mcolor),
-                ));
+                w += 3;
+                spans.push(Span::styled(glyph, Style::default().fg(fg).bg(mcolor)));
+                w += UnicodeWidthStr::width(glyph);
                 spans.push(Span::styled(
                     format!("{} ", name),
-                    Style::default()
-                        .fg(fg_color(hue(theme, mode_key)))
-                        .bg(mcolor)
-                        .bold(),
+                    Style::default().fg(fg).bg(mcolor).bold(),
                 ));
+                w += UnicodeWidthStr::width(name.as_str()) + 1;
                 if !t.saved {
-                    spans.push(Span::styled("● ", Style::default().fg(errc).bg(mcolor)));
+                    spans.push(Span::styled(
+                        "\u{25cf} ",
+                        Style::default().fg(errc).bg(mcolor),
+                    ));
+                    w += 2;
                 }
-                spans.push(Span::styled("", Style::default().fg(mcolor).bg(base)));
+                close_at = w as u16;
+                spans.push(Span::styled(
+                    if show_closers { "\u{00d7} " } else { "  " },
+                    Style::default().fg(fg).bg(mcolor).bold(),
+                ));
+                w += 2;
+                spans.push(Span::styled(
+                    "\u{e0b4}",
+                    Style::default().fg(mcolor).bg(base),
+                ));
+                w += 1;
             } else {
                 spans.push(Span::styled(
                     format!(" {} ", i + 1),
+                    Style::default().fg(faint).bg(base),
+                ));
+                w += 3;
+                spans.push(Span::styled(glyph, Style::default().fg(textc).bg(base)));
+                w += UnicodeWidthStr::width(glyph);
+                spans.push(Span::styled(
+                    name.clone(),
                     Style::default().fg(dim).bg(base),
                 ));
-                spans.push(Span::styled(glyph, Style::default().fg(textc).bg(base)));
-                spans.push(Span::styled(name, Style::default().fg(dim).bg(base)));
+                w += UnicodeWidthStr::width(name.as_str());
                 if !t.saved {
-                    spans.push(Span::styled(" ●", Style::default().fg(errc).bg(base)));
+                    spans.push(Span::styled(
+                        " \u{25cf}",
+                        Style::default().fg(errc).bg(base),
+                    ));
+                    w += 2;
                 }
+                spans.push(Span::styled(" ", Style::default().bg(base)));
+                w += 1;
+                close_at = w as u16;
+                spans.push(Span::styled(
+                    if show_closers { "\u{00d7} " } else { "  " },
+                    Style::default().fg(faint).bg(base),
+                ));
+                w += 2;
             }
-            spans.push(Span::styled(" ", Style::default().bg(base)));
-            let w: usize = spans
-                .iter()
-                .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
-                .sum();
-            (spans, w)
+            (spans, w, close_at)
         })
         .collect();
 
@@ -888,8 +962,11 @@ fn renderer(
             .push(Span::styled("‹ ", Style::default().fg(dim).bg(base)));
         pill_x += 2;
     }
-    for (k, (spans, w)) in pills.iter().enumerate().take(hi_excl).skip(lo) {
+    lay.tab_close.clear();
+    for (k, (spans, w, close_at)) in pills.iter().enumerate().take(hi_excl).skip(lo) {
         lay.tab_pills.push((pill_x, pill_x + *w as u16, k));
+        let cx = pill_x + close_at;
+        lay.tab_close.push((cx, cx + 2, k));
         pill_x += *w as u16;
         tabline.spans.extend(spans.clone());
     }
@@ -912,6 +989,7 @@ fn renderer(
 
     // middle: gutter + code, zero tinted bg, cursor line reads via
     // bold number + underline, selection via bold + underline. transparent.
+    // subtle wash so the cursor line reads without hiding the theme
     let mut visible: Vec<Line> = highlighter
         .highlight(tab)
         .into_iter()
@@ -920,29 +998,52 @@ fn renderer(
         .take(edit_h as usize)
         .map(|(i, mut line)| {
             let cur = i as i32 == tab.cursor_y;
-            let selected = mode == 3
-                && vis.on
-                && (i as i32 - vis.v_y as i32).abs() + (vis.v_y as i32 - tab.cursor_y).abs()
-                    == (i as i32 - tab.cursor_y).abs();
+            let in_selection = if vis.on && (mode == 2 || mode == 3) {
+                if mode == 3 {
+                    (i as i32 - vis.v_y as i32).abs() + (vis.v_y as i32 - tab.cursor_y).abs()
+                        == (i as i32 - tab.cursor_y).abs()
+                } else {
+                    let (y1, y2) = if tab.cursor_y < vis.v_y as i32 {
+                        (tab.cursor_y, vis.v_y as i32)
+                    } else {
+                        (vis.v_y as i32, tab.cursor_y)
+                    };
+                    i as i32 >= y1 && i as i32 <= y2
+                }
+            } else {
+                false
+            };
 
             let num = format!("{:>w$} ", i + 1, w = digits as usize);
             let num_st = if cur {
                 Style::default().fg(lav).bold()
-            } else if selected {
+            } else if in_selection {
                 Style::default().fg(textc).bold()
             } else {
                 Style::default().fg(faint)
             };
+
             let mut spans = vec![Span::styled(num, num_st)];
-            if cur {
+            // a whisper of wash on the cursor line, none while typing so
+            // the code area stays transparent in insert mode
+            let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
+            if let Some(bg) = wash {
                 for s in &mut line.spans {
-                    s.style = s.style.add_modifier(Modifier::UNDERLINED);
-                }
-            } else if selected {
-                for s in &mut line.spans {
-                    s.style = s.style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                    s.style = s.style.bg(bg);
                 }
             }
+            for s in &mut line.spans {
+                if cur {
+                    s.style = s.style.add_modifier(Modifier::UNDERLINED);
+                }
+                if in_selection {
+                    // For mode 2 (visual), we should ideally highlight specific characters,
+                    // but for now let's at least highlight the whole line or parts of it.
+                    // Improving visual mode to character-level would require more complex span splitting.
+                    s.style = s.style.bg(fade_rgb(theme, lav, 0.3));
+                }
+            }
+
             spans.append(&mut line.spans);
             Line::from(spans)
         })
@@ -1096,7 +1197,7 @@ fn renderer(
                     let full = resolve_media_path(path, &dir);
                     let ok = !full.is_empty()
                         && std::path::Path::new(&full).exists()
-                        && preview::kitty_supported()
+                        && pv.images
                         && cols > 4;
                     if ok {
                         preview::ensure_media(pv, &full, cols)
@@ -1180,29 +1281,38 @@ fn renderer(
     }
 
     // bottom: mode pill, live context, position, brand. each fact once.
-    let msg: String = match mode {
-        10 => format!("save: {}", the_command_line),
-        11 => format!("open: {}", the_command_line),
-        401 => "can't open".to_string(),
-        402 => "can't save".to_string(),
-        403 => "unsaved work, quit anyway?".to_string(),
+    let (msg, msg_color): (String, Color) = match mode {
+        10 => (
+            format!("save: {}", the_command_line),
+            hue(theme, "peach").into(),
+        ),
+        11 => (
+            format!("open: {}", the_command_line),
+            hue(theme, "peach").into(),
+        ),
+        401 => ("can't open file".to_string(), errc),
+        402 => ("can't save file".to_string(), errc),
+        403 => (
+            "unsaved work, quit anyway?".to_string(),
+            hue(theme, "yellow").into(),
+        ),
         2 => {
             let y = (tab.cursor_y as usize).min(tab.input_box.len().saturating_sub(1));
             let len = tab.input_box[y].len();
             let mut a = (tab.cursor_x as usize).min(len);
             let mut b = vis.v_x.min(len);
-            while !tab.input_box[y].is_char_boundary(a) {
+            while a > 0 && !tab.input_box[y].is_char_boundary(a) {
                 a -= 1;
             }
-            while !tab.input_box[y].is_char_boundary(b) {
+            while b > 0 && !tab.input_box[y].is_char_boundary(b) {
                 b -= 1;
             }
             let n = tab.input_box[y][a.min(b)..a.max(b)].chars().count();
-            format!("{} chars selected", n)
+            (format!("{} chars selected", n), hue(theme, "mauve").into())
         }
         3 => {
             let n = (tab.cursor_y - vis.v_y as i32).unsigned_abs() as usize + 1;
-            format!("{} lines selected", n)
+            (format!("{} lines selected", n), hue(theme, "pink").into())
         }
         _ => {
             let words: usize = tab
@@ -1210,42 +1320,62 @@ fn renderer(
                 .iter()
                 .flat_map(|l| l.split_whitespace())
                 .count();
-            format!("{} lines · {} words · {}", total, words, theme_name)
+            (format!("{}L · {}W · {}", total, words, theme_name), muted)
         }
     };
     // icons everywhere, rainbow file color, branding bottom right
     let micon = mode_icon(mode);
     let (fgly, _) = file_icon(&tab.file_name);
-    let mauve: Color = hue(theme, "mauve").into();
     let brand = " blur 1.1 ";
-    let pos = format!("{}:{}", tab.cursor_y + 1, visual_x + 1);
-    let pill_label = format!("{}{}", micon, label.trim());
+    let pos = format!(" {}:{} ", tab.cursor_y + 1, visual_x + 1);
+
+    let pill_label = format!(" {}{} ", micon, label.trim());
     let pill_w = UnicodeWidthStr::width(pill_label.as_str()) + 2;
-    // file glyph carries its own trailing space, msg starts right after it
     let msg_w = UnicodeWidthStr::width(msg.as_str()) + 2;
-    let pos_w = UnicodeWidthStr::width(pos.as_str());
+    let pos_w = UnicodeWidthStr::width(pos.as_str()) + 2;
     let brand_w = UnicodeWidthStr::width(brand) + 2;
-    // cells: pill(+content+) + space + glyph + msg + gap + pos + space + brand(+content+)
-    let gap = (status_area.width as usize).saturating_sub(pill_w + msg_w + pos_w + brand_w + 5);
+
+    let gap = (status_area.width as usize).saturating_sub(pill_w + msg_w + pos_w + brand_w + 6);
+
     let status = Line::from(vec![
+        // Mode Pill
         Span::styled("", Style::default().fg(mstyle.bg.unwrap_or(base)).bg(base)),
-        Span::styled(format!(" {}{} ", micon, label.trim()), mstyle.bold()),
+        Span::styled(pill_label, mstyle.bold()),
         Span::styled("", Style::default().fg(mstyle.bg.unwrap_or(base)).bg(base)),
         Span::raw(" "),
-        Span::styled(fgly, Style::default().fg(textc).bg(base)),
-        Span::styled(msg.clone(), Style::default().fg(muted).bg(base)),
+        // Message / Info Pill
+        Span::styled("", Style::default().fg(fade_rgb(theme, lav, 0.2)).bg(base)),
+        Span::styled(
+            format!(" {} ", fgly),
+            Style::default().fg(textc).bg(fade_rgb(theme, lav, 0.2)),
+        ),
+        Span::styled(
+            msg,
+            Style::default().fg(msg_color).bg(fade_rgb(theme, lav, 0.2)),
+        ),
+        Span::styled("", Style::default().fg(fade_rgb(theme, lav, 0.2)).bg(base)),
         Span::raw(" ".repeat(gap)),
-        Span::styled(format!(" {}", pos), Style::default().fg(muted).bg(base)),
+        // Position Pill
+        Span::styled("", Style::default().fg(fade_rgb(theme, lav, 0.2)).bg(base)),
+        Span::styled(
+            pos,
+            Style::default()
+                .fg(textc)
+                .bg(fade_rgb(theme, lav, 0.2))
+                .bold(),
+        ),
+        Span::styled("", Style::default().fg(fade_rgb(theme, lav, 0.2)).bg(base)),
         Span::raw(" "),
-        Span::styled("", Style::default().fg(mauve).bg(base)),
+        // Brand Pill
+        Span::styled("", Style::default().fg(lav).bg(base)),
         Span::styled(
             brand,
             Style::default()
                 .fg(fg_color(hue(theme, "mauve")))
-                .bg(mauve)
+                .bg(lav)
                 .bold(),
         ),
-        Span::styled("", Style::default().fg(mauve).bg(base)),
+        Span::styled("", Style::default().fg(lav).bg(base)),
     ]);
     frame.render_widget(Paragraph::new(status).bg(base), status_area);
 
