@@ -1,11 +1,13 @@
 mod controls;
 mod helpers;
+mod home;
 mod modes;
 mod normal_mode;
 mod preview;
 mod select_modes;
 
-use helpers::{Highlighter, Tab, Visual, fade, fade_rgb, fg_color, hue, tok};
+use helpers::{Highlighter, Tab, Visual, fade, fade_rgb, fg_color};
+pub use helpers::{hue, tok};
 use normal_mode::normal_mode;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::*;
@@ -153,13 +155,98 @@ fn save_config_theme(name: &str) {
     }
 }
 
+/// the start screen: logo, actions, recent files. returns what to open,
+/// or None when the user quits.
+fn home_screen(
+    terminal: &mut DefaultTerminal,
+    theme: &opaline::Theme,
+) -> std::io::Result<Option<home::Choice>> {
+    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+    let mut state = home::Home::new();
+    loop {
+        let size = terminal.size()?;
+        let height = size.height as usize;
+        state.set_screen(height);
+        terminal.draw(|frame| home::draw(frame, theme, &state, (0, 0)))?;
+        // the cursor is only ever useful while a path is being typed,
+        // the rest of the start screen stays quiet
+        if state.is_prompting() {
+            let col = state.prompt_col() + state.cursor().unwrap_or(0) as u16;
+            terminal.set_cursor_position((col, state.prompt_row()))?;
+            terminal.show_cursor()?;
+        } else {
+            terminal.hide_cursor()?;
+        }
+
+        let event = crossterm::event::read()?;
+        match event {
+            crossterm::event::Event::Key(key) if key.kind != KeyEventKind::Release => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    return Ok(None);
+                }
+                if state.is_prompting() {
+                    match key.code {
+                        KeyCode::Esc => state.cancel(),
+                        KeyCode::Enter => match state.activate() {
+                            Some(home::Choice::Open(p)) => return Ok(Some(home::Choice::Open(p))),
+                            Some(home::Choice::Prompt) => {}
+                            _ => {}
+                        },
+                        KeyCode::Backspace => state.backspace(),
+                        KeyCode::Char(c) => {
+                            state.type_char(c);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
+                    KeyCode::Char('n') => return Ok(Some(home::Choice::New)),
+                    KeyCode::Char('o') => {
+                        state.type_char(' ');
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => state.move_sel(-1),
+                    KeyCode::Down | KeyCode::Char('j') => state.move_sel(1),
+                    KeyCode::Home => state.move_sel(-64),
+                    KeyCode::End => state.move_sel(64),
+                    KeyCode::Enter => match state.activate() {
+                        Some(home::Choice::Open(p)) => return Ok(Some(home::Choice::Open(p))),
+                        Some(home::Choice::New) => return Ok(Some(home::Choice::New)),
+                        Some(home::Choice::Quit) => return Ok(None),
+                        _ => {}
+                    },
+                    KeyCode::Char(c) if !state.type_char(c) => {
+                        state.move_sel(1);
+                    }
+                    _ => {}
+                }
+            }
+            crossterm::event::Event::Mouse(m) => match m.kind {
+                MouseEventKind::ScrollUp => state.move_sel(-1),
+                MouseEventKind::ScrollDown => state.move_sel(1),
+                MouseEventKind::Down(_) => {
+                    if let Some(choice) = state.click(m.row, height) {
+                        match choice {
+                            home::Choice::Open(p) => return Ok(Some(home::Choice::Open(p))),
+                            home::Choice::New => return Ok(Some(home::Choice::New)),
+                            home::Choice::Quit => return Ok(None),
+                            home::Choice::Prompt => {}
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
 /// true when the key was consumed by the page scrolling handler above
 fn scroll_key(code: crossterm::event::KeyCode, ctrl: bool) -> bool {
     match code {
         crossterm::event::KeyCode::PageUp | crossterm::event::KeyCode::PageDown => true,
-        crossterm::event::KeyCode::Char(c) => {
-            ctrl && matches!(c, 'd' | 'u' | 'f' | 'b')
-        }
+        crossterm::event::KeyCode::Char(c) => ctrl && matches!(c, 'd' | 'u' | 'f' | 'b'),
         _ => false,
     }
 }
@@ -188,7 +275,10 @@ fn scroll_by(tab: &mut helpers::Tab, delta: i32, view_h: usize) {
 /// horizontal scroll, used by shift and the wheel. mirrors the vertical
 /// behaviour so the cursor keeps its place inside the window.
 fn scroll_x_by(tab: &mut helpers::Tab, delta: i32, view_w: usize) {
-    let len = tab.input_box.get(tab.cursor_y as usize).map_or(0, |l| l.len()) as i32;
+    let len = tab
+        .input_box
+        .get(tab.cursor_y as usize)
+        .map_or(0, |l| l.len()) as i32;
     if view_w == 0 {
         return;
     }
@@ -260,19 +350,30 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     let mut press: Option<(i32, i32)> = None;
     let mut last_shape: Option<crossterm::cursor::SetCursorStyle> = None;
     tabs.push(Tab::new());
-    match args.len() {
-        1 => {}
-        _ => match std::fs::read_to_string(&args[1]) {
+    // no arguments means the start screen. one argument goes straight in.
+    let start_file = if args.len() > 1 {
+        Some(args[1].clone())
+    } else {
+        match home_screen(terminal, &theme)? {
+            Some(home::Choice::Open(path)) => Some(path),
+            Some(home::Choice::New) => None,
+            _ => return Ok(()),
+        }
+    };
+
+    if let Some(path) = start_file {
+        home::record_recent(&path);
+        match std::fs::read_to_string(&path) {
             Ok(content) => {
-                tabs[0].input_box = content.split('\n').map(|line| line.to_string()).collect();
-                tabs[0].file_name = args[1].clone();
+                tabs[0].input_box = content.split('\n').map(str::to_string).collect();
+                tabs[0].file_name = path;
                 tabs[0].saved = true;
             }
             Err(_) => {
                 tabs[0].input_box = vec![String::new()];
-                tabs[0].file_name = args[1].clone();
+                tabs[0].file_name = path;
             }
-        },
+        }
     }
     loop {
         // cursor shape belongs to the terminal, not the frame. write it
@@ -487,11 +588,10 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                                     scroll_x_by(&mut tabs[tab_selector], -4, w);
                                 }
                             }
-                            MouseEventKind::ScrollRight
-                                if edit_hit => {
-                                    let w = layout.text_w;
-                                    scroll_x_by(&mut tabs[tab_selector], 4, w);
-                                }
+                            MouseEventKind::ScrollRight if edit_hit => {
+                                let w = layout.text_w;
+                                scroll_x_by(&mut tabs[tab_selector], 4, w);
+                            }
                             _ => {}
                         }
                     }
@@ -741,7 +841,7 @@ fn mode_style(mode: i32, theme: &opaline::Theme) -> (String, Style, Color) {
     )
 }
 
-fn short_of(path: &str) -> String {
+pub fn short_of(path: &str) -> String {
     if path.is_empty() {
         "untitled".to_string()
     } else {
@@ -750,7 +850,7 @@ fn short_of(path: &str) -> String {
 }
 
 // nvim-web-devicons style map, colors land on catppuccin keys
-fn file_icon(path: &str) -> (&'static str, &'static str) {
+pub fn file_icon(path: &str) -> (&'static str, &'static str) {
     let l = path.to_lowercase();
     if l.ends_with(".rs") {
         (" ", "peach")

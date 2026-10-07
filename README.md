@@ -32,9 +32,27 @@ cargo build --release
 ## Usage
 
 ```bash
-./blur              # empty buffer
-./blur path/to/file # open a file in a new tab
+./blur              # start screen
+./blur path/to/file # open a file directly
 ```
+
+## Start screen
+
+Launched with no arguments, blur opens on a start screen: the logo, `open file`, `new buffer`, `quit`, and the ten files you opened last.
+
+| Keys | Action |
+| ---- | ------ |
+| `j` / `k`, arrows | Move |
+| `Enter` | Open the highlighted entry, or confirm the path |
+| `o` | Focus the path prompt |
+| any character | Start typing a path |
+| `n` | New buffer |
+| `q` / `Esc` | Quit |
+| Click | Activate an entry |
+
+The cursor stays hidden on the start screen and only appears while a path is being typed.
+
+Recent files live in `$XDG_STATE_HOME/blur/recent`, or `$BLUR_STATE_DIR/recent` when that is set.
 
 ## Keys
 

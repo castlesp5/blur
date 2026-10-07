@@ -1894,7 +1894,11 @@ mod tests {
         };
         // the import line and the keyword after it must not share the
         // comment color of line 0
-        assert_ne!(color_of(2, 0), color_of(0, 0), "import line took comment color");
+        assert_ne!(
+            color_of(2, 0),
+            color_of(0, 0),
+            "import line took comment color"
+        );
         assert_ne!(color_of(4, 0), color_of(0, 0), "def took comment color");
     }
 
