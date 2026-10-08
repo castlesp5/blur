@@ -253,9 +253,3 @@ src/
 ## license
 
 dual-licensed under mit or apache-2.0.
-
-## credits
-
-- [programmersd21](https://github.com/programmersd21)
-- [castlesp5](https://github.com/castlesp5), original author
-- [artemtsitronov](https://github.com/artemtsitronov)

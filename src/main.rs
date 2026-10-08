@@ -816,7 +816,7 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
                     0 => {
                         // preview pane and theme picker live here so
                         // normal_mode stays edit-only
-                        if event_key.code == crossterm::event::KeyCode::Char('h') {
+                        if event_key.code == crossterm::event::KeyCode::Char('H') {
                             // back to the start screen, keeping tabs open
                             go_home = true;
                             mode = 0;

@@ -178,7 +178,7 @@ pub fn select_mode_line(
                     tab.input_box.push(String::new());
                     tab.cursor_y = 0;
                 } else {
-                    vis.v_y = tab.cursor_y as usize;
+                    tab.cursor_y = tab.cursor_y.min(tab.input_box.len() as i32 - 1);
                 }
             } else {
                 // cursor on the anchor line: delete just that line
