@@ -310,6 +310,66 @@ fn scroll_x_by(tab: &mut helpers::Tab, delta: i32, view_w: usize) {
     tab.cursor_x = (tab.cursor_x + applied).clamp(0, len);
 }
 
+/// keep the cursor inside the buffer and on a character boundary.
+/// edits and line moves can leave it past the end, which draws it
+/// outside the text.
+fn clamp_cursor(tab: &mut Tab) {
+    if tab.input_box.is_empty() {
+        tab.cursor_y = 0;
+        tab.cursor_x = 0;
+        return;
+    }
+    tab.cursor_y = tab.cursor_y.clamp(0, tab.input_box.len() as i32 - 1);
+    let len = tab.input_box[tab.cursor_y as usize].len();
+    let mut x = tab.cursor_x.clamp(0, len as i32) as usize;
+    while !tab.input_box[tab.cursor_y as usize].is_char_boundary(x) {
+        x = x.saturating_sub(1);
+    }
+    tab.cursor_x = x as i32;
+}
+
+/// true when `row` sits between `a` and `b`, whichever order they are in
+fn row_in_range(row: i32, a: i32, b: i32) -> bool {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    row >= lo && row <= hi
+}
+
+/// paint only the bytes in `from..to`, leaving the rest of the line alone
+fn style_range(
+    spans: &[Span<'static>],
+    from: usize,
+    to: usize,
+    style: Style,
+) -> Vec<Span<'static>> {
+    let (from, to) = if from <= to { (from, to) } else { (to, from) };
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    let mut at = 0usize;
+    for s in spans {
+        let start = at;
+        let end = at + s.content.len();
+        at = end;
+        if end <= from || start >= to {
+            out.push(s.clone());
+            continue;
+        }
+        let lo = from.saturating_sub(start);
+        let hi = (to - start).min(s.content.len());
+        if lo > 0 {
+            out.push(Span::styled(s.content[..lo].to_string(), s.style));
+        }
+        if hi > lo {
+            out.push(Span::styled(
+                s.content[lo..hi].to_string(),
+                style.patch(s.style),
+            ));
+        }
+        if hi < s.content.len() {
+            out.push(Span::styled(s.content[hi..].to_string(), s.style));
+        }
+    }
+    out
+}
+
 /// shape the terminal cursor to match what the editor is doing: bar while
 /// typing, underline while selecting, block at rest.
 fn cursor_shape(mode: i32) -> crossterm::cursor::SetCursorStyle {
@@ -953,6 +1013,11 @@ fn app(terminal: &mut DefaultTerminal, picker: Option<media::Picker>) -> std::io
             }
             _ => {}
         }
+        // every mode can leave the cursor past the end after an edit or
+        // a line move, which draws it outside the text
+        if let Some(t) = tabs.get_mut(tab_selector) {
+            clamp_cursor(t);
+        }
     }
     media::clear(&mut imgs);
     crossterm::execute!(
@@ -1373,20 +1438,12 @@ fn renderer(
         .take(edit_h as usize)
         .map(|(i, line)| {
             let cur = i as i32 == cursor_y;
-            let in_selection = if vis.on && (mode == 2 || mode == 3) {
-                if mode == 3 {
-                    (i as i32 - vis.v_y as i32).abs() + (vis.v_y as i32 - cursor_y).abs()
-                        == (i as i32 - cursor_y).abs()
-                } else {
-                    let (y1, y2) = if cursor_y < vis.v_y as i32 {
-                        (cursor_y, vis.v_y as i32)
-                    } else {
-                        (vis.v_y as i32, cursor_y)
-                    };
-                    i as i32 >= y1 && i as i32 <= y2
-                }
-            } else {
-                false
+            // visual-line covers the rows between anchor and cursor.
+            // visual is character-wise and only ever on one line.
+            let in_selection = match mode {
+                3 if vis.on => row_in_range(i as i32, vis.v_y as i32, cursor_y),
+                2 if vis.on && vis.v_y as i32 == cursor_y => true,
+                _ => false,
             };
 
             let num = format!("{:>w$} │ ", i + 1, w = digits as usize);
@@ -1398,14 +1455,28 @@ fn renderer(
                 Style::default().fg(faint)
             };
 
+            let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
+            let pick = fade_rgb(theme, lav, 0.3);
+
+            // character-wise selection paints just the chosen range,
+            // everything else on the row keeps its own colours
+            if mode == 2 && vis.on && vis.v_y as i32 == cursor_y {
+                let body = style_range(
+                    &line.spans,
+                    vis.v_x,
+                    tab.cursor_x as usize,
+                    Style::default().bg(pick),
+                );
+                let mut spans = Vec::with_capacity(body.len() + 1);
+                spans.push(Span::styled(num, num_st));
+                spans.extend(body);
+                return Line::from(spans);
+            }
+
+            // rows that need restyling: the cursor line and any
+            // selected line. every other row keeps its cached spans.
             let mut spans = Vec::with_capacity(line.spans.len() + 1);
             spans.push(Span::styled(num, num_st));
-
-            // a whisper of wash on the cursor line, skipped while
-            // typing so the area stays transparent in insert mode
-            let wash = (cur && mode != 1).then(|| fade(theme, tok(theme, "accent.deep"), 0.09));
-            // only the cursor line and any selection need restyling,
-            // every other row keeps its cached spans untouched
             if wash.is_some() || in_selection {
                 for s in line.spans.iter() {
                     let mut s = s.clone();
@@ -1416,7 +1487,7 @@ fn renderer(
                         s.style = s.style.add_modifier(Modifier::UNDERLINED);
                     }
                     if in_selection {
-                        s.style = s.style.bg(fade_rgb(theme, lav, 0.3));
+                        s.style = s.style.bg(pick);
                     }
                     spans.push(s);
                 }
@@ -2105,5 +2176,28 @@ mod tests {
         assert!(!scroll_key(KeyCode::Char('d'), false), "plain d deletes");
         assert!(!scroll_key(KeyCode::Char('u'), false), "plain u undoes");
         assert!(!scroll_key(KeyCode::Char('x'), true));
+    }
+
+    #[test]
+    fn row_range_ordering() {
+        assert!(row_in_range(5, 3, 7));
+        assert!(row_in_range(5, 7, 3));
+        assert!(row_in_range(3, 3, 7));
+        assert!(row_in_range(7, 3, 7));
+        assert!(!row_in_range(2, 3, 7));
+        assert!(!row_in_range(8, 3, 7));
+    }
+
+    #[test]
+    fn style_range_slices_characters_accurately() {
+        use ratatui::style::Style;
+        let spans = vec![Span::raw("hello "), Span::raw("world")];
+        let styled = style_range(&spans, 2, 8, Style::default().underlined());
+        let merged: String = styled.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(merged, "hello world");
+        assert_eq!(styled[0].content, "he");
+        assert_eq!(styled[1].content, "llo ");
+        assert_eq!(styled[2].content, "wo");
+        assert_eq!(styled[3].content, "rld");
     }
 }

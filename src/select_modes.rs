@@ -13,6 +13,11 @@ pub fn select_mode_line(
         &mut tab.cursor_x,
         &tab.input_box,
     )? {
+        // the anchor has to stay a real row or the highlight runs away
+        if vis.v_y >= tab.input_box.len() {
+            vis.v_y = tab.input_box.len().saturating_sub(1);
+        }
+        crate::clamp_cursor(tab);
         return Ok(true);
     }
     match event_key.code {
@@ -212,6 +217,13 @@ pub fn select_mode1(
         &mut tab.cursor_x,
         &tab.input_box,
     )? {
+        // character-wise selection is one line only, so reaching another
+        // line starts a new selection on that line
+        if tab.cursor_y as usize != vis.v_y {
+            vis.v_y = tab.cursor_y as usize;
+            vis.v_x = tab.cursor_x as usize;
+        }
+        crate::clamp_cursor(tab);
         return Ok(true);
     }
     match event_key.code {
