@@ -25,7 +25,7 @@ transparent interface. built on
 ## build
 
 ```bash
-git clone https://github.com/programmersd21/blur_ide.git
+git clone https://github.com/castlesp5/blur.git
 cd blur_ide
 cargo build --release
 ```
