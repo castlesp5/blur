@@ -1,3 +1,4 @@
 /target
+/local
 blur-log.txt
 test.rs
