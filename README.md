@@ -26,7 +26,7 @@ transparent interface. built on
 
 ```bash
 git clone https://github.com/castlesp5/blur.git
-cd blur_ide
+cd blur
 cargo build --release
 ```
 
