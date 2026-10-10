@@ -1,14 +1,16 @@
-use crate::controls::controls;
+use crate::controls::{controls};
 use crate::helpers::{EditRecord, Tab, Visual, apply_forward, apply_inverse};
+
 
 pub fn normal_mode(
     tabs: &mut Vec<Tab>,
     tab_selector: &mut usize,
+    // tab: &mut Tab,
     vis: &mut Visual,
     event_key: crossterm::event::KeyEvent,
     mode: &mut i32,
     the_command_line: &mut String,
-    text: &mut [String],
+    text: &mut Vec<String>,
 ) -> std::io::Result<bool> {
     let tab = &mut tabs[*tab_selector];
     if controls(event_key, &mut tab.cursor_y, &mut tab.cursor_x, text).unwrap() {
@@ -20,24 +22,29 @@ pub fn normal_mode(
             *tab_selector += 1;
         }
         crossterm::event::KeyCode::Char('q') => {
-            // confirm when any open tab has unsaved work, not just this one
-            if tabs.iter().any(|t| !t.saved) {
+            if !tab.saved {
                 *mode = 403;
             } else {
                 return Ok(false);
             }
         }
         crossterm::event::KeyCode::Tab | crossterm::event::KeyCode::Char('n') => {
-            if *tab_selector < tabs.len() - 1 {
+            if *tab_selector < tabs.len() - 1
+            {
                 *tab_selector += 1;
-            } else {
+            }
+            else 
+            {
                 *tab_selector = 0;
             }
         }
         crossterm::event::KeyCode::BackTab => {
-            if *tab_selector > 0 {
+            if *tab_selector > 0
+            {
                 *tab_selector -= 1;
-            } else {
+            }
+            else 
+            {
                 *tab_selector = tabs.len() - 1;
             }
         }
@@ -56,10 +63,7 @@ pub fn normal_mode(
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('i') => {
-            *mode = 1;
-        }
-        crossterm::event::KeyCode::Char('K') => {
-            if tab.cursor_y as usize > 0 {
+            *mode = 1; } crossterm::event::KeyCode::Char('K') => { if tab.cursor_y as usize > 0 {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
                 tab.unsave();
                 tab.input_box.insert(tab.cursor_y as usize - 1, text);
@@ -67,7 +71,8 @@ pub fn normal_mode(
             }
         }
         crossterm::event::KeyCode::Char('J') => {
-            if (tab.cursor_y as usize) < tab.input_box.len() - 1 {
+            if (tab.cursor_y as usize) < tab.input_box.len() - 1
+            {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
                 tab.unsave();
                 tab.input_box.insert(tab.cursor_y as usize + 1, text);
@@ -83,13 +88,13 @@ pub fn normal_mode(
             });
             tab.redo_stack.clear();
             tab.input_box[tab.cursor_y as usize].insert_str(0, "    ");
-            tab.cursor_x = tab.input_box[tab.cursor_y as usize]
-                .find(|c: char| c != ' ')
-                .unwrap_or(0) as i32;
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+            crate::helpers::log("test");
         }
         crossterm::event::KeyCode::Char('<') => {
             tab.unsave();
-            if tab.input_box[tab.cursor_y as usize].starts_with("    ") {
+            if tab.input_box[tab.cursor_y as usize].starts_with("    ")
+            {
                 tab.undo_stack.push(EditRecord::RemoveString {
                     row: tab.cursor_y as usize,
                     col: 0,
@@ -98,9 +103,7 @@ pub fn normal_mode(
                 tab.redo_stack.clear();
                 tab.input_box[tab.cursor_y as usize].replace_range(0..4, "");
             }
-            tab.cursor_x = tab.input_box[tab.cursor_y as usize]
-                .find(|c: char| c != ' ')
-                .unwrap_or(0) as i32;
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
@@ -114,7 +117,10 @@ pub fn normal_mode(
         crossterm::event::KeyCode::Char('b') => {
             let start = tab.cursor_x as usize;
             let before = &text[tab.cursor_y as usize][..start];
-            let new_x = before.rfind(' ').unwrap_or_default() as i32;
+            let new_x = match before.rfind(' ') {
+                Some(rel) => rel,
+                None => 0,
+            } as i32;
 
             tab.cursor_x = new_x;
         }
@@ -126,38 +132,27 @@ pub fn normal_mode(
         }
         crossterm::event::KeyCode::Char('o') => {
             tab.unsave();
-            // open line below with the same auto-indent enter would give
-            let y = tab.cursor_y as usize;
-            let base: String = tab.input_box[y]
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .collect();
-            let mut next = base;
-            if tab.input_box[y].trim_end().ends_with('{')
-                || tab.input_box[y].trim_end().ends_with('(')
-                || tab.input_box[y].trim_end().ends_with('[')
-                || tab.input_box[y].trim_end().ends_with(':')
-            {
-                next.push_str("    ");
-            }
-            tab.input_box.insert(y + 1, next.clone());
-            tab.undo_stack.push(EditRecord::InsertLine { row: y + 1 });
+            tab.input_box
+                .insert(tab.cursor_y as usize + 1, String::new());
+            tab.undo_stack.push(EditRecord::InsertLine {
+                row: tab.cursor_y as usize + 1,
+            });
             tab.redo_stack.clear();
             tab.cursor_y += 1;
-            tab.cursor_x = next.len() as i32;
+            tab.cursor_x = 0;
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('w') => {
-            if !tab.file_name.is_empty() {
-                match std::fs::write(&tab.file_name, tab.input_box.join("\n")) {
+            if tab.file_name.len() > 0 {
+                match std::fs::write(&tab.file_name, &tab.input_box.join("\n")) {
                     Ok(_) => {
                         tab.saved = true;
-                        *mode = 0;
                     }
                     Err(_) => {
                         *mode = 402;
                     }
                 }
+                *mode = 0;
                 the_command_line.clear();
                 return Ok(true);
             }
@@ -227,10 +222,11 @@ pub fn normal_mode(
             let line = tab.input_box.remove(y);
             tab.cursor_x = 0;
             tab.unsave();
-            if tab.input_box.is_empty() {
+            if tab.input_box.len() == 0 {
                 tab.input_box.push(String::new());
             }
-            if y == tab.input_box.len() {
+            if y == tab.input_box.len()
+            {
                 tab.cursor_y -= 1;
             }
 
@@ -239,6 +235,7 @@ pub fn normal_mode(
                 content: line.clone(),
             });
             tab.redo_stack.clear();
+
         }
         crossterm::event::KeyCode::Char('u') => {
             if let Some(record) = tab.undo_stack.pop() {
