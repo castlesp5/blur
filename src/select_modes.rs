@@ -165,8 +165,7 @@ pub fn select_mode_line(
         crossterm::event::KeyCode::Char('d') => {
             tab.unsave();
             if tab.cursor_y as usize > vis.v_y {
-                for _ in vis.v_y..tab.cursor_y as usize + 1
-                {
+                for _ in vis.v_y..tab.cursor_y as usize + 1 {
                     tab.undo_stack.push(EditRecord::RemoveLine {
                         row: vis.v_y,
                         content: tab.input_box[vis.v_y].to_string(),
@@ -174,20 +173,17 @@ pub fn select_mode_line(
                     tab.redo_stack.clear();
                     tab.input_box.remove(vis.v_y);
                 }
-                if tab.input_box.is_empty()
-                {
+                if tab.input_box.is_empty() {
                     tab.input_box.push(String::new());
                     tab.cursor_y = 0;
+                } else {
+                    tab.cursor_y = (vis.v_y as i32).min(tab.input_box.len() as i32 - 1);
                 }
-                else
-                {
-                    tab.cursor_y = vis.v_y as i32;
-                }
+                tab.cursor_x = 0;
             }
-                // tab.cursor_y = vis.v_y as i32;
+            // tab.cursor_y = vis.v_y as i32;
             else if vis.v_y > tab.cursor_y as usize {
-                for _ in tab.cursor_y as usize..vis.v_y + 1
-                {
+                for _ in tab.cursor_y as usize..vis.v_y + 1 {
                     tab.undo_stack.push(EditRecord::RemoveLine {
                         row: tab.cursor_y as usize,
                         content: tab.input_box[tab.cursor_y as usize].to_string(),
@@ -195,15 +191,29 @@ pub fn select_mode_line(
                     tab.redo_stack.clear();
                     tab.input_box.remove(tab.cursor_y as usize);
                 }
-                if tab.input_box.is_empty()
-                {
+                if tab.input_box.is_empty() {
                     tab.input_box.push(String::new());
                     tab.cursor_y = 0;
+                } else {
+                    tab.cursor_y = tab.cursor_y.min(tab.input_box.len() as i32 - 1);
                 }
-                else
-                {
-                    vis.v_y = tab.cursor_y as usize;
+            } else {
+                // cursor on the anchor line: delete just that line
+                let y = tab.cursor_y as usize;
+                tab.undo_stack.push(EditRecord::RemoveLine {
+                    row: y,
+                    content: tab.input_box[y].clone(),
+                });
+                tab.redo_stack.clear();
+                tab.input_box.remove(y);
+                if tab.input_box.is_empty() {
+                    tab.input_box.push(String::new());
+                    tab.cursor_y = 0;
+                } else if y >= tab.input_box.len() {
+                    tab.cursor_y = tab.input_box.len() as i32 - 1;
                 }
+                tab.cursor_x = 0;
+                tab.unsave();
             }
             return Ok(false);
         }
