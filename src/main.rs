@@ -1176,7 +1176,7 @@ fn shorten_middle(name: &str, max: usize) -> String {
 
 fn hint_for(mode: i32) -> &'static str {
     match mode {
-        0 => "i insert · ? help · t themes · P preview · q quit",
+        0 => "i insert · ? help · t themes · P preview · H home · q quit",
         1 => "esc normal",
         2 | 3 => "d delete · esc cancel",
         10 | 11 => "enter ok · esc cancel",
@@ -1865,6 +1865,7 @@ fn renderer(
                     ("O", "open in a new tab"),
                     ("N", "new tab"),
                     ("q Q X", "close, quit all, close saved"),
+                    ("H", "back to the start screen"),
                 ],
             ),
             (

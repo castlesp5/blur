@@ -91,6 +91,7 @@ the same file twice are dropped at startup.
 | `t` | theme picker |
 | `P` | toggle preview pane |
 | `X` | close all saved tabs |
+| `H` | go to the start screen, keeping tabs open |
 | `q` | close tab, or go to the start screen if it was the last one |
 | `Q` | quit everything |
 
