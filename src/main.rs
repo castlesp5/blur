@@ -98,8 +98,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         {
                             if tabs.len() > 1 {
                                 tabs.remove(tab_selector);
-                                if tab_selector > tabs.len() {
-                                    crate::helpers::log(&format!("{}", tab_selector));
+                                if tab_selector >= tabs.len() {
                                     tab_selector -= 1;
                                 }
                                 mode = 0;

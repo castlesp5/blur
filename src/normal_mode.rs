@@ -1,6 +1,5 @@
-use crate::controls::{controls};
+use crate::controls::controls;
 use crate::helpers::{EditRecord, Tab, Visual, apply_forward, apply_inverse};
-
 
 pub fn normal_mode(
     tabs: &mut Vec<Tab>,
@@ -29,22 +28,16 @@ pub fn normal_mode(
             }
         }
         crossterm::event::KeyCode::Tab | crossterm::event::KeyCode::Char('n') => {
-            if *tab_selector < tabs.len() - 1
-            {
+            if *tab_selector < tabs.len() - 1 {
                 *tab_selector += 1;
-            }
-            else 
-            {
+            } else {
                 *tab_selector = 0;
             }
         }
         crossterm::event::KeyCode::BackTab => {
-            if *tab_selector > 0
-            {
+            if *tab_selector > 0 {
                 *tab_selector -= 1;
-            }
-            else 
-            {
+            } else {
                 *tab_selector = tabs.len() - 1;
             }
         }
@@ -63,7 +56,10 @@ pub fn normal_mode(
             *mode = 1;
         }
         crossterm::event::KeyCode::Char('i') => {
-            *mode = 1; } crossterm::event::KeyCode::Char('K') => { if tab.cursor_y as usize > 0 {
+            *mode = 1;
+        }
+        crossterm::event::KeyCode::Char('K') => {
+            if tab.cursor_y as usize > 0 {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
                 tab.unsave();
                 tab.input_box.insert(tab.cursor_y as usize - 1, text);
@@ -71,8 +67,7 @@ pub fn normal_mode(
             }
         }
         crossterm::event::KeyCode::Char('J') => {
-            if (tab.cursor_y as usize) < tab.input_box.len() - 1
-            {
+            if (tab.cursor_y as usize) < tab.input_box.len() - 1 {
                 let text = tab.input_box.remove(tab.cursor_y as usize);
                 tab.unsave();
                 tab.input_box.insert(tab.cursor_y as usize + 1, text);
@@ -88,13 +83,14 @@ pub fn normal_mode(
             });
             tab.redo_stack.clear();
             tab.input_box[tab.cursor_y as usize].insert_str(0, "    ");
-            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize]
+                .find(|c: char| c != ' ')
+                .unwrap_or(0) as i32;
             crate::helpers::log("test");
         }
         crossterm::event::KeyCode::Char('<') => {
             tab.unsave();
-            if tab.input_box[tab.cursor_y as usize].starts_with("    ")
-            {
+            if tab.input_box[tab.cursor_y as usize].starts_with("    ") {
                 tab.undo_stack.push(EditRecord::RemoveString {
                     row: tab.cursor_y as usize,
                     col: 0,
@@ -103,7 +99,9 @@ pub fn normal_mode(
                 tab.redo_stack.clear();
                 tab.input_box[tab.cursor_y as usize].replace_range(0..4, "");
             }
-            tab.cursor_x = tab.input_box[tab.cursor_y as usize].find(|c: char| c != ' ').unwrap_or(0) as i32;
+            tab.cursor_x = tab.input_box[tab.cursor_y as usize]
+                .find(|c: char| c != ' ')
+                .unwrap_or(0) as i32;
         }
         crossterm::event::KeyCode::Char('e') => {
             let start = tab.cursor_x as usize;
@@ -170,6 +168,9 @@ pub fn normal_mode(
             tab.unsave();
             if tab.input_box[y].is_empty() && tab.input_box.len() > 1 {
                 tab.input_box.remove(y);
+                if y >= tab.input_box.len() {
+                    tab.cursor_y = tab.input_box.len() as i32 - 1;
+                }
                 tab.cursor_x = 0;
                 tab.undo_stack.push(EditRecord::RemoveEmptyLine { row: y });
                 tab.redo_stack.clear();
@@ -225,8 +226,7 @@ pub fn normal_mode(
             if tab.input_box.len() == 0 {
                 tab.input_box.push(String::new());
             }
-            if y == tab.input_box.len()
-            {
+            if y == tab.input_box.len() {
                 tab.cursor_y -= 1;
             }
 
@@ -235,7 +235,6 @@ pub fn normal_mode(
                 content: line.clone(),
             });
             tab.redo_stack.clear();
-
         }
         crossterm::event::KeyCode::Char('u') => {
             if let Some(record) = tab.undo_stack.pop() {

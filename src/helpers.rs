@@ -1,22 +1,20 @@
 use syntect::parsing::SyntaxSet;
 
-
-
 pub struct Visual {
-            pub v_x: usize,
-            pub v_y: usize,
-            pub on : bool,
+    pub v_x: usize,
+    pub v_y: usize,
+    pub on: bool,
 }
 
 impl Visual {
     pub fn new() -> Self {
-        Visual { v_x: 0, v_y: 0, on: false}
+        Visual {
+            v_x: 0,
+            v_y: 0,
+            on: false,
+        }
     }
-
 }
-
-
-
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -62,8 +60,7 @@ impl Highlighter {
     }
 
     pub fn highlight<'a>(&self, tab: &mut Tab) -> Vec<ratatui::text::Line<'a>> {
-        if let Some(cached) = &tab.highlight_cache
-        {
+        if let Some(cached) = &tab.highlight_cache {
             return cached.clone();
         }
         if tab.file_name.is_empty() {
@@ -140,8 +137,7 @@ impl Tab {
         }
     }
 
-    pub fn unsave(&mut self)
-    {
+    pub fn unsave(&mut self) {
         self.saved = false;
         self.highlight_cache = None;
     }
@@ -160,7 +156,7 @@ pub enum EditRecord {
     },
     RemoveString {
         row: usize,
-        col : usize,
+        col: usize,
         text: String,
     },
     SplitLine {
@@ -176,7 +172,7 @@ pub enum EditRecord {
     },
     RemoveLine {
         row: usize,
-        content: String 
+        content: String,
     },
     RemoveEmptyLine {
         row: usize,
@@ -208,16 +204,16 @@ pub fn apply_inverse(record: &EditRecord, input_box: &mut Vec<String>) -> (usize
         }
 
         EditRecord::MergeLine { row, prev_len } => {
-            let combined = input_box[*row - 1].split_off(*prev_len);
-            input_box.insert(*row, combined);
-            (*row, 0)
+            let rest = input_box[*row].split_off(*prev_len);
+            input_box.insert(*row + 1, rest);
+            (*row + 1, 0)
         }
 
         EditRecord::InsertLine { row } => {
             input_box.remove(*row);
             (*row, 0)
         }
-        
+
         EditRecord::RemoveLine { row, content } => {
             input_box.insert(*row, content.clone());
             (*row, 0)
