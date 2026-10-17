@@ -1,15 +1,16 @@
 mod controls;
-    mod helpers;
+mod helpers;
 mod modes;
 mod normal_mode;
 mod select_modes;
 
 use helpers::{Highlighter, Tab, Visual, fg_color};
 use normal_mode::normal_mode;
-use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin};
 use ratatui::style::*;
+use ratatui::symbols::border;
 use ratatui::text::*;
-use ratatui::widgets::{Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
 use ratatui::*;
 use select_modes::{select_mode_line, select_mode1};
 use unicode_width::UnicodeWidthStr;
@@ -22,7 +23,7 @@ fn main() -> std::io::Result<()> {
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
     let args: Vec<String> = std::env::args().collect();
-    let theme = opaline::load_by_name("catppuccin-mocha").unwrap();
+    let theme = opaline::load_by_name("everforest-dark").unwrap();
 
     let mut tabs = Vec::new();
     let mut tab_selector: usize = 0;
@@ -97,8 +98,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                         {
                             if tabs.len() > 1 {
                                 tabs.remove(tab_selector);
-                                if tab_selector > tabs.len() {
-                                    crate::helpers::log(&format!("{}", tab_selector));
+                                if tab_selector >= tabs.len() {
                                     tab_selector -= 1;
                                 }
                                 mode = 0;
@@ -202,20 +202,18 @@ fn renderer(
     ])
     .split(frame.area());
 
-    let block = ratatui::widgets::Block::default()
-        .borders(Borders::TOP | Borders::BOTTOM)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(
-            Style::default()
-                .fg(theme.color("accent.secondary").into())
-                .bg(theme.color("bg.base").into()),
-        );
+    let block = ratatui::widgets::Block::default();
     let main_area = block.inner(areas[1]);
 
     let digits = tab.input_box.len().to_string().len();
-    let [gutter_area, inner] =
-        Layout::horizontal([Constraint::Length(digits as u16 + 2), Constraint::Min(0)])
-            .areas(main_area);
+    let [gutter_area, sep_area, inner] = Layout::horizontal([
+        Constraint::Length(digits as u16 + 2),
+        Constraint::Length(2),
+        Constraint::Min(0),
+    ])
+    .areas(main_area);
+    let gutter_area = gutter_area.inner(Margin::new(0, 1));
+    let inner = inner.inner(Margin::new(0, 1));
 
     let footer_text: String;
     let footer_chunks =
@@ -250,7 +248,7 @@ fn renderer(
         403 => footer_text = format!("you have unsaved work, quit anyway? [y/n]"),
         _ => {
             footer_text =
-                "SOME ERRORS, try to relaunch the program                   BLUR 1.0".to_string();
+                "SOME ERRORS, try to relaunch the program                   BLUR 1.1".to_string();
         }
     }
 
@@ -303,6 +301,10 @@ fn renderer(
         .collect();
     let footer_left = Line::from(vec![
         Span::styled(
+            "\u{e0b6}",
+            Style::new().fg(theme.color("accent.primary").into()),
+        ),
+        Span::styled(
             footer_text.clone(),
             Style::default()
                 .fg(fg_color(theme.color("accent.primary")))
@@ -313,71 +315,100 @@ fn renderer(
             "\u{e0b0}",
             Style::default()
                 .fg(theme.color("accent.primary").into())
-                .bg(theme.color("accent.secondary").into()),
+                .bg(theme.color("bg.elevated").into()),
         ),
         Span::styled(
             footer_file_name,
             Style::default()
-                .fg(fg_color(theme.color("accent.secondary")))
-                .bg(theme.color("accent.secondary").into())
+                .fg(fg_color(theme.color("bg.elevated")))
+                .bg(theme.color("bg.elevated").into())
                 .bold(),
         ),
         Span::styled(
-            "\u{e0b0}",
-            Style::default().fg(theme.color("accent.secondary").into()),
+            "\u{e0b4}",
+            Style::default().fg(theme.color("bg.elevated").into()),
         ),
     ]);
     let footer_right = Line::from(vec![
         Span::raw(format!(" Row {}; Col {} ", tab.cursor_y, visual_x)),
         Span::styled(
-            "\u{e0b2}",
+            "\u{e0b6}",
             Style::default().fg(theme.color("accent.primary").into()),
         ),
         Span::styled(
-            " Blur 1.0 ",
+            " Blur 1.1 ",
             Style::default()
                 .fg(fg_color(theme.color("accent.primary")))
                 .bg(theme.color("accent.primary").into())
                 .bold(),
         ),
+        Span::styled(
+            "\u{e0b4}",
+            Style::default().fg(theme.color("accent.primary").into()),
+        ),
     ]);
+
+    let tab_names_styled: Vec<Line> = tab_names
+        .iter()
+        .enumerate()
+        .map(|(i, x)| {
+            if i == *tab_selector {
+                Line::from(vec![
+                    Span::styled(
+                        "\u{e0b6}",
+                        Style::new().fg(theme.color("accent.primary").into()),
+                    ),
+                    Span::styled(
+                        x.as_str(),
+                        Style::new()
+                            .fg(fg_color(theme.color("accent.primary")))
+                            .bg(theme.color("accent.primary").into())
+                            .bold(),
+                    ),
+                    Span::styled(
+                        "\u{e0b4}",
+                        Style::new().fg(theme.color("accent.primary").into()),
+                    ),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        x.as_str(),
+                        Style::new().fg(theme.color("text.muted").into()),
+                    ),
+                    Span::raw(" "),
+                ])
+            }
+        })
+        .collect();
 
     let input =
         ratatui::widgets::Paragraph::new(ratatui::text::Text::from(highlighter.highlight(tab)))
-            .scroll((tab.scroll_y, tab.scroll_x))
-            .bg(theme.color("bg.base"));
-    let tabs = ratatui::widgets::Tabs::new(tab_names.clone())
+            .scroll((tab.scroll_y, tab.scroll_x));
+
+    let tabs = ratatui::widgets::Tabs::new(tab_names_styled)
         .select(*tab_selector)
-        .divider(ratatui::symbols::DOT)
-        .style(
-            Style::default()
-                .bg(theme.color("bg.base").into())
-                .fg(theme.color("text.primary").into()),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(theme.color("accent.primary").into())
-                .fg(fg_color(theme.color("accent.primary"))),
-        )
-        .padding(" ", " ");
+        .divider(" ")
+        .highlight_style(Style::new())
+        .padding("", "");
 
     frame.render_widget(tabs, areas[0]);
     frame.render_widget(block, areas[1]);
+    frame.render_widget(Paragraph::new(numbers), gutter_area);
     frame.render_widget(
-        Paragraph::new(numbers).bg(theme.color("bg.base")),
-        gutter_area,
+        Block::new()
+            .borders(Borders::LEFT)
+            .border_style(Style::new().fg(theme.color("border.unfocused").into())),
+        sep_area,
     );
     frame.render_widget(input, inner);
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(footer_left)
-            .alignment(Alignment::Left)
-            .bg::<ratatui::style::Color>(theme.color("bg.base").into()),
+        ratatui::widgets::Paragraph::new(footer_left).alignment(Alignment::Left),
         footer_chunks[0],
     );
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(footer_right)
-            .alignment(Alignment::Right)
-            .bg::<ratatui::style::Color>(theme.color("bg.base").into()),
+        ratatui::widgets::Paragraph::new(footer_right).alignment(Alignment::Right),
         footer_chunks[1],
     );
 

@@ -1,4 +1,6 @@
-# Blur: V1.0
+![Main screenshot](screenshots/1.png)
+
+# Blur 1.1
 
 A fast, modal, terminal-based text editor written in Rust: built on [`ratatui`](https://github.com/ratatui-org/ratatui) and [`crossterm`](https://github.com/crossterm-rs/crossterm), with Vim-inspired keybindings, syntax highlighting via `syntect`, and theming powered by `opaline`.
 
