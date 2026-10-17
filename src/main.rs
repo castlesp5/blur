@@ -422,7 +422,7 @@ fn renderer(
         } else {
             " File to Open: "
         };
-        let cursor_col = prefix.chars().count() + the_command_line.chars().count();
+        let cursor_col = prefix.chars().count() + the_command_line.chars().count() + 1;
         frame.set_cursor_position((areas[2].x + cursor_col as u16, areas[2].y));
     }
 }
